@@ -1,0 +1,37 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # Format: <app-id>_<docker-service-name>_1
+      APP_HOST: samuelkurt-playit_web_1
+      APP_PORT: 80
+
+  # Static status/info page. This is what the dashboard tile opens.
+  web:
+    image: nginx:1.27-alpine
+    restart: on-failure
+    volumes:
+      - ${APP_DATA_DIR}/www:/usr/share/nginx/html:ro
+
+  # Official playit.gg agent. Host networking so the tunnel can reach the
+  # Minecraft server port on this machine (same as `docker run --net=host`).
+  # The secret key is read from a file in the app's data folder, so it never
+  # lives in this repository. Until the file exists the container just waits.
+  agent:
+    image: ghcr.io/playit-cloud/playit-agent:latest
+    network_mode: host
+    restart: on-failure
+    stop_grace_period: 1m
+    volumes:
+      - ${APP_DATA_DIR}/data:/data:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until [ -s /data/secret.key ]; do
+          echo "playit: no secret key yet. Save it to data/secret.key in this app's data folder, then restart the app." >&2
+          sleep 30
+        done
+        SECRET_KEY="$$(tr -d '[:space:]' < /data/secret.key)"
+        export SECRET_KEY
+        exec /playit/entrypoint.sh

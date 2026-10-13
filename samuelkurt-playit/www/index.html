@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>playit.gg Tunnel</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#5b6570; --card:#f3f5f7; --accent:#2f6fed; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --fg:#e8ebee; --muted:#9aa5b1; --card:#1e2227; --accent:#7aa2ff; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui,sans-serif; }
+  main { max-width:40rem; margin:0 auto; padding:2.5rem 1rem; }
+  h1 { font-size:1.5rem; margin:0 0 .25rem; }
+  p.sub { color:var(--muted); margin:0 0 1.5rem; }
+  .card { background:var(--card); border-radius:12px; padding:1rem 1.25rem; margin:0 0 1rem; }
+  h2 { font-size:1rem; margin:0 0 .5rem; }
+  ul { margin:.25rem 0 0; padding-left:1.25rem; }
+  a { color:var(--accent); }
+  code { background:rgba(127,127,127,.18); padding:.1em .35em; border-radius:4px; font-size:.9em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>playit.gg Tunnel</h1>
+  <p class="sub">Tunnel agent for your Minecraft server</p>
+
+  <div class="card">
+    <h2>Status</h2>
+    <p>If you can read this page, the app is running. This page cannot see inside the agent.
+    To check that the agent itself is connected, open the app's logs in Umbrel, or look at your agent in the
+    <a href="https://playit.gg" target="_blank" rel="noopener">playit.gg dashboard</a>.</p>
+  </div>
+
+  <div class="card">
+    <h2>If the logs say "no secret key yet"</h2>
+    <ul>
+      <li>Create an agent in the playit.gg dashboard and copy its secret key.</li>
+      <li>Save it to <code>data/secret.key</code> in this app's data folder (see the store README).</li>
+      <li>Restart the app.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Tunnels</h2>
+    <p>Tunnels are managed in the playit.gg dashboard, not here. For a Crafty Controller server, add a
+    Minecraft Java tunnel that points at the server's port on this machine.</p>
+  </div>
+</main>
+</body>
+</html>

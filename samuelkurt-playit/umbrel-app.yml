@@ -1,0 +1,34 @@
+manifestVersion: 1
+id: samuelkurt-playit
+name: playit.gg Tunnel
+tagline: Free tunnel so friends can join your Minecraft server without Tailscale
+icon: https://raw.githubusercontent.com/samuelkurt/umbrel-community-store/main/samuelkurt-playit/icon.svg
+category: networking
+version: "1.0.0"
+port: 3987
+description: >-
+  Runs the official playit.gg agent on your Umbrel. It opens an outbound
+  connection to playit.gg, which gives your Minecraft server (for example
+  one managed by Crafty Controller) a public address. No port forwarding
+  and no VPN software for your friends.
+
+
+  The app tile opens a small status page. The agent itself has no web
+  interface; manage tunnels in the playit.gg dashboard.
+
+
+  Setup: create an agent at playit.gg, copy its secret key, and save it
+  into the app's data folder (see README in the store repository).
+developer: samuelkurt
+website: https://playit.gg
+submitter: samuelkurt
+submission: https://github.com/samuelkurt/umbrel-community-store
+repo: https://github.com/samuelkurt/umbrel-community-store
+support: https://github.com/samuelkurt/umbrel-community-store/issues
+gallery: []
+releaseNotes: >-
+  Initial release.
+dependencies: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
