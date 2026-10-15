@@ -1,0 +1,31 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # Format: <app-id>_<docker-service-name>_1
+      APP_HOST: samuelkurt-blockhaus_web_1
+      APP_PORT: 3000
+
+  web:
+    image: node:22-alpine
+    restart: on-failure
+    working_dir: /app
+    command: ["node", "/app/server.js"]
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      SERVERS_DIR: /servers
+      NODE_ENV: production
+    volumes:
+      # The panel's own code (copied here from the store when the app is installed).
+      - ${APP_DATA_DIR}/src:/app:ro
+      # Settings (Crafty URL, token, addresses). Written as root, mode 600.
+      - ${APP_DATA_DIR}/data:/data
+      # Crafty's servers folder, so the panel can read/write server.properties,
+      # whitelist.json and logs. "denny-crafty" is the app id of the Crafty install.
+      - ${UMBREL_ROOT}/app-data/denny-crafty/data/servers:/servers
+    # Fallback route to Crafty (https://host.docker.internal:8443) if the container
+    # name crafty_container is not resolvable from this app's network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

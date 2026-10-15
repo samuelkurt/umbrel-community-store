@@ -1,8 +1,13 @@
 # samuelkurt Umbrel community app store
 
-One app so far: **playit.gg Tunnel** (`samuelkurt-playit`). It runs the official
-playit.gg agent so friends can join your Minecraft server without Tailscale or
-port forwarding (works behind CGNAT).
+Two apps:
+
+- **playit.gg Tunnel** (`samuelkurt-playit`): runs the official playit.gg agent so friends can
+  join your Minecraft server without Tailscale or port forwarding (works behind CGNAT).
+- **Blockhaus** (`samuelkurt-blockhaus`): Aternos-style control panel for your Crafty Controller
+  server (start/stop, console, log, options, players). See `samuelkurt-blockhaus/README.md`.
+
+The rest of this file is about the playit.gg app.
 
 ## 1. Publish this store
 
@@ -55,9 +60,3 @@ instead (`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {
 - The agent image is `ghcr.io/playit-cloud/playit-agent:latest`. If upstream
   changes how it starts, pin a specific tag in `docker-compose.yml`.
 - Security: whitelist on, `online-mode=true`, never tunnel Crafty's web panel (8443).
-# umbrel-community-store
-# umbrel-community-store
-# umbrel-community-store
-# umbrel-community-store
-# umbrel-community-store
-# umbrel-community-store

@@ -1,0 +1,35 @@
+manifestVersion: 1
+id: samuelkurt-blockhaus
+name: Blockhaus
+tagline: Aternos-style control panel for your Crafty Controller server
+icon: https://raw.githubusercontent.com/samuelkurt/umbrel-community-store/main/samuelkurt-blockhaus/icon.svg
+category: gaming
+version: "0.1.0"
+port: 3988
+description: >-
+  A simple, German-language control panel for the Minecraft server you run in
+  Crafty Controller, laid out like Aternos: start and stop, live console, logs,
+  server options (server.properties) and player lists (whitelist, operators,
+  bans).
+
+
+  Blockhaus talks to Crafty through its API and reads the server folder
+  directly, so it needs a Crafty API token and access to Crafty's servers
+  folder (already set up in this app's compose file).
+
+
+  It is for the server owner only. Friends connect with the normal Minecraft
+  address; there is no public web page.
+developer: samuelkurt
+website: https://github.com/samuelkurt/umbrel-community-store
+submitter: samuelkurt
+submission: https://github.com/samuelkurt/umbrel-community-store
+repo: https://github.com/samuelkurt/umbrel-community-store
+support: https://github.com/samuelkurt/umbrel-community-store/issues
+gallery: []
+releaseNotes: >-
+  First preview: server page, console, log, options, players.
+dependencies: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
