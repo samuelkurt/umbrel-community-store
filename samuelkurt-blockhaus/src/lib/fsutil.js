@@ -19,4 +19,11 @@ function writeFileKeepOwner(file, data) {
   fs.renameSync(tmp, file);
 }
 
-module.exports = { writeFileKeepOwner };
+/** Returns a function that gives a path the same owner as `refPath` (no-op when not allowed, e.g. not root). */
+function chownLike(refPath) {
+  let st;
+  try { st = fs.statSync(refPath); } catch { return () => {}; }
+  return (p) => { try { fs.chownSync(p, st.uid, st.gid); } catch { /* not root */ } };
+}
+
+module.exports = { writeFileKeepOwner, chownLike };

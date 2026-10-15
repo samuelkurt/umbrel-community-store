@@ -12,6 +12,7 @@ function createMockCrafty({ serverPath = '/crafty/servers/uuid-1', token = 'tok1
     stdin: [],
     actions: [],
     logins: 0,
+    onStdin: null,
   };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -46,7 +47,7 @@ function createMockCrafty({ serverPath = '/crafty/servers/uuid-1', token = 'tok1
           updating: false, waiting_start: false, first_run: false });
       }
       if (req.method === 'GET' && rest === 'logs') return json(200, { status: 'ok', data: st.log });
-      if (req.method === 'POST' && rest === 'stdin') { st.stdin.push(body); return json(200, { status: 'ok' }); }
+      if (req.method === 'POST' && rest === 'stdin') { st.stdin.push(body); if (st.onStdin) st.onStdin(body); return json(200, { status: 'ok' }); }
       if (req.method === 'POST' && (m = /^action\/(\w+)$/.exec(rest))) {
         st.actions.push(m[1]);
         if (m[1] === 'start_server') { st.running = true; st.pingOk = false; }

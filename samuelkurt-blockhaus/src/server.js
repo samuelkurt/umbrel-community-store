@@ -11,6 +11,11 @@ const files = require('./lib/serverfiles');
 const state = require('./lib/state');
 const { writeFileKeepOwner } = require('./lib/fsutil');
 const { request } = require('./lib/http');
+const { Jobs } = require('./lib/jobs');
+const { Backups } = require('./lib/backups');
+const routes = require('./lib/routes');
+const { hashUrl } = require('./lib/download');
+const software = require('./lib/software');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -59,13 +64,9 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
   const crafty = new Crafty(() => config.get());
 
   // ---- helpers --------------------------------------------------------------------------
-  let serverCache = { at: 0, list: [] };
-  async function listServers(force = false) {
-    if (!force && Date.now() - serverCache.at < 3000) return serverCache.list;
-    const list = await crafty.servers();
-    serverCache = { at: Date.now(), list };
-    return list;
-  }
+  const jobs = new Jobs();
+  const backups = new Backups(dataDir);
+  const listServers = () => crafty.servers();
   async function getServer(id) {
     const list = await listServers();
     const s = list.find((x) => String(x.server_id) === String(id));
@@ -106,6 +107,8 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
     const st = state.deriveState(stats, dir ? logTail(dir) : '');
     const cfg = config.get();
     const names = state.parsePlayers(stats.players);
+    const inst = dir ? software.readInstalled(dir) : null;
+    const kindLabel = inst && software.kindInfo(inst.software) ? software.kindInfo(inst.software).label : null;
     return {
       id: server.server_id,
       name: server.server_name,
@@ -114,8 +117,9 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       players: names,
       online: Number(stats.online) || names.length,
       max: Number(stats.max) || 0,
-      version: stats.version || '',
-      software: state.guessSoftware(server.executable, server.execution_command),
+      version: (stats.running && stats.version) || (inst && inst.version) || stats.version || '',
+      software: kindLabel || state.guessSoftware(server.executable, server.execution_command),
+      softwareBuild: inst && inst.build ? inst.build : null,
       jar: server.executable || '',
       memoryMb: state.parseMaxMemoryMb(server.execution_command),
       port: stats.server_port || server.server_port || 25565,
@@ -142,7 +146,6 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       const body = await readJson(req);
       config.update(body);
       crafty.jwt = null;
-      serverCache = { at: 0, list: [] };
       return send(res, 200, config.publicView());
     }
     if (m === 'POST' && p === '/config/test') {
@@ -165,8 +168,15 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
+    if (m === 'POST' && p === '/tools/sha1') {
+      const b = await readJson(req);
+      if (!/^https?:\/\//i.test(String(b.url || ''))) throw new HttpError(400, 'Bitte eine http(s)-Adresse angeben.');
+      try { return send(res, 200, await hashUrl(String(b.url))); }
+      catch (e) { throw new HttpError(502, e.message); }
+    }
+
     if (m === 'GET' && p === '/servers') {
-      const list = await listServers(true);
+      const list = await listServers();
       return send(res, 200, list.map((s) => ({ id: s.server_id, name: s.server_name, port: s.server_port })));
     }
 
@@ -264,6 +274,8 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
+    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps });
+    if (handled) return;
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
 
@@ -316,6 +328,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       if (res.headersSent) return res.end();
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
       if (e instanceof CraftyError) return send(res, 502, { error: e.message, code: e.code });
+      if (e && Number.isInteger(e.status) && e.status >= 400 && e.status < 500) return send(res, e.status, { error: e.message });
       console.error('Unerwarteter Fehler:', e);
       return send(res, 500, { error: 'Interner Fehler: ' + (e && e.message ? e.message : e) });
     }

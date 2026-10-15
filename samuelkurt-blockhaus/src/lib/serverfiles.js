@@ -51,4 +51,40 @@ function readLog(dir, name, maxBytes = 512 * 1024) {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { resolveDir, listLogs, readLog };
+function logSize(dir) {
+  try { return fs.statSync(path.join(dir, 'logs', 'latest.log')).size; } catch { return 0; }
+}
+
+/** Text appended to latest.log after byte offset `from` (the file is rotated on restart: then read from 0). */
+function readLogFrom(dir, from) {
+  const file = path.join(dir, 'logs', 'latest.log');
+  let st;
+  try { st = fs.statSync(file); } catch { return ''; }
+  const start = st.size < from ? 0 : from;
+  const len = Math.min(st.size - start, 1024 * 1024);
+  if (len <= 0) return '';
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+/**
+ * Send a console command and wait for a matching line to show up in latest.log.
+ * Resolves with the text appended after the command (so callers can parse it); rejects on timeout.
+ */
+async function ask({ dir, send, command, until, timeoutMs = 6000 }) {
+  const from = logSize(dir);
+  await send(command);
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 250));
+    const text = readLogFrom(dir, from);
+    if (until.test(text)) return text;
+  }
+  throw Object.assign(new Error('Der Server hat nicht rechtzeitig geantwortet.'), { status: 504 });
+}
+
+module.exports = { ask, resolveDir, listLogs, readLog, logSize, readLogFrom };

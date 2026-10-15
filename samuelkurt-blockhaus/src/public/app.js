@@ -64,6 +64,12 @@ const ICONS = {
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.3c1.8.7 3 2.4 3 4.7"/>',
   terminal: '<path d="M4 5h16v14H4z"/><path d="M7.5 9.5 10 12l-2.5 2.5M12 15h4.5"/>',
   log: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 16h7"/>',
+  backpack: '<path d="M8 6a4 4 0 0 1 8 0"/><path d="M6 8h12a1 1 0 0 1 1 1v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a1 1 0 0 1 1-1z"/><path d="M9 14h6"/>',
+  folder: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
+  archive: '<path d="M4 5h16v4H4zM5.5 9v10h13V9M10 13h4"/>',
+  cube: '<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M12 12 20 7.5M12 12v9M12 12 4 7.5"/>',
+  puzzle: '<path d="M10 4a2 2 0 1 1 4 0v2h4v4h-2a2 2 0 1 0 0 4h2v4h-4v-2a2 2 0 1 0-4 0v2H6v-4h2a2 2 0 1 0 0-4H6V6h4z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
 };
 function icon(name) {
@@ -86,7 +92,14 @@ const ROUTES = [
   { id: 'options', label: 'Optionen', icon: 'sliders', view: viewOptions },
   { id: 'players', label: 'Spieler', icon: 'users', view: viewPlayers },
   { id: 'console', label: 'Konsole', icon: 'terminal', view: viewConsole },
+  { id: 'inventory', label: 'Inventare', icon: 'backpack', view: (t) => window.BHViews.inventory(t) },
   { id: 'log', label: 'Log', icon: 'log', view: viewLog },
+  { id: 'sep' },
+  { id: 'files', label: 'Dateien', icon: 'folder', view: (t) => window.BHViews.files(t) },
+  { id: 'worlds', label: 'Welten', icon: 'globe', view: (t) => window.BHViews.worlds(t) },
+  { id: 'backups', label: 'Backups', icon: 'archive', view: (t) => window.BHViews.backups(t) },
+  { id: 'software', label: 'Software', icon: 'cube', view: (t) => window.BHViews.software(t) },
+  { id: 'mods', label: 'Mods & Plugins', icon: 'puzzle', view: (t) => window.BHViews.mods(t) },
   { id: 'sep' },
   { id: 'settings', label: 'Einstellungen', icon: 'gear', view: viewSettings },
 ];
@@ -213,7 +226,7 @@ async function viewServer(token) {
         h('div', { class: 'btns' }, btns)),
       addrCard(st),
       h('div', { class: 'grid' },
-        kv('Software', st.software, st.jar || null),
+        kv('Software', st.software, st.softwareBuild ? `Build ${st.softwareBuild}` : (st.jar || null)),
         kv('Version', st.version || '–', st.motd || null),
         kv('Arbeitsspeicher', st.memoryMb ? (st.memoryMb >= 1024 && st.memoryMb % 1024 === 0 ? `${st.memoryMb / 1024} GB` : `${st.memoryMb} MB`) : '–', st.state === 'online' || st.state === 'starting' ? `belegt: ${st.memUsed || '–'}` : 'Obergrenze (-Xmx)'),
         kv('Welt', st.worldName || '–', st.worldSize || null)),
@@ -269,9 +282,9 @@ const SCHEMA = [
     { key: 'view-distance', label: 'Sichtweite (Chunks)', type: 'number', min: 2, max: 32, def: '10', hint: 'Höher kostet mehr Leistung.' },
     { key: 'simulation-distance', label: 'Simulationsweite (Chunks)', type: 'number', min: 3, max: 32, def: '10' },
   ] },
-  { group: 'Texturpaket', note: 'Das Paket muss unter einer öffentlich erreichbaren URL liegen. Spieler laden es beim Beitritt herunter.', items: [
-    { key: 'resource-pack', label: 'Download-URL', type: 'text', def: '' },
-    { key: 'resource-pack-sha1', label: 'SHA-1-Prüfsumme (optional)', type: 'text', def: '', hint: '40 Zeichen, hilft dem Client beim Zwischenspeichern.' },
+  { group: 'Texturpaket', note: 'Das Paket (.zip) muss unter einer öffentlich erreichbaren URL liegen, denn Spieler laden es beim Beitritt selbst herunter. Dieses Panel ist von außen nicht erreichbar, hochladen geht also nicht. Geeignet: GitHub-Release, Dropbox-Link mit ?dl=1, eigener Webspace.', items: [
+    { key: 'resource-pack', label: 'Download-URL', type: 'text', def: '', hint: 'Direktlink auf die ZIP-Datei, kein Link zu einer Download-Seite.' },
+    { key: 'resource-pack-sha1', label: 'SHA-1-Prüfsumme (optional)', type: 'text', def: '', sha1: true, hint: '40 Zeichen. Der Button lädt das Paket von der URL oben und berechnet sie.' },
     { key: 'require-resource-pack', label: 'Paket verpflichtend', type: 'bool', def: 'false' },
     { key: 'resource-pack-prompt', label: 'Hinweistext (optional)', type: 'text', def: '' },
   ] },
@@ -356,8 +369,23 @@ async function viewOptions(token) {
       warn.textContent = it.warn && (it.key in edits) ? it.warn : '';
     };
     const ctl = control(it, (v) => { setEdit(it, v); update(); });
+    let extra = null;
+    if (it.sha1) {
+      const btn = h('button', { class: 'small', style: 'margin-top:6px', onclick: async () => {
+        const url = ('resource-pack' in edits ? edits['resource-pack'] : values['resource-pack'] || '').trim();
+        if (!url) { toast('Zuerst die Download-URL eintragen (und speichern oder hier stehen lassen).', true); return; }
+        btn.disabled = true; btn.textContent = 'Berechne …';
+        try {
+          const r = await api('POST', '/tools/sha1', { url });
+          ctl.value = r.sha1; setEdit(it, r.sha1); update();
+          toast(`SHA-1 berechnet (${(r.size / 1048576).toFixed(1)} MB).`);
+        } catch (e) { toast(e.message, true); }
+        btn.disabled = false; btn.textContent = 'Aus URL berechnen';
+      } }, 'Aus URL berechnen');
+      extra = btn;
+    }
     row.append(h('div', { class: 'txt' }, h('b', {}, it.label), it.hint ? h('small', {}, it.hint) : null, warn),
-      h('div', { class: 'ctl' }, ctl));
+      h('div', { class: 'ctl' }, ctl, extra));
     update();
     return row;
   }
@@ -619,6 +647,7 @@ async function viewSettings() {
     h('div', { style: 'margin-top:14px' }, result));
 }
 
+window.BH = { h, put, api, toast, store, icon, S, P, header, every, errorBox, stripAnsi, avatar, route, getToken: () => routeToken, main };
 window.addEventListener('hashchange', route);
 route();
 })();
