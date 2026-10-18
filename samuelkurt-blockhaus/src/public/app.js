@@ -69,6 +69,7 @@ const ICONS = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
   archive: '<path d="M4 5h16v4H4zM5.5 9v10h13V9M10 13h4"/>',
   cube: '<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M12 12 20 7.5M12 12v9M12 12 4 7.5"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
   puzzle: '<path d="M10 4a2 2 0 1 1 4 0v2h4v4h-2a2 2 0 1 0 0 4h2v4h-4v-2a2 2 0 1 0-4 0v2H6v-4h2a2 2 0 1 0 0-4H6V6h4z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
 };
@@ -100,6 +101,7 @@ const ROUTES = [
   { id: 'backups', label: 'Backups', icon: 'archive', view: (t) => window.BHViews.backups(t) },
   { id: 'software', label: 'Software', icon: 'cube', view: (t) => window.BHViews.software(t) },
   { id: 'mods', label: 'Mods & Plugins', icon: 'puzzle', view: (t) => window.BHViews.mods(t) },
+  { id: 'packs', label: 'Texturpakete', icon: 'image', view: (t) => window.BHViews.packs(t) },
   { id: 'sep' },
   { id: 'settings', label: 'Einstellungen', icon: 'gear', view: viewSettings },
 ];
@@ -282,7 +284,7 @@ const SCHEMA = [
     { key: 'view-distance', label: 'Sichtweite (Chunks)', type: 'number', min: 2, max: 32, def: '10', hint: 'Höher kostet mehr Leistung.' },
     { key: 'simulation-distance', label: 'Simulationsweite (Chunks)', type: 'number', min: 3, max: 32, def: '10' },
   ] },
-  { group: 'Texturpaket', note: 'Das Paket (.zip) muss unter einer öffentlich erreichbaren URL liegen, denn Spieler laden es beim Beitritt selbst herunter. Dieses Panel ist von außen nicht erreichbar, hochladen geht also nicht. Geeignet: GitHub-Release, Dropbox-Link mit ?dl=1, eigener Webspace.', items: [
+  { group: 'Texturpaket', link: ['#/packs', 'Eigene Pakete direkt von deinem Server anbieten (Seite „Texturpakete“)'], note: 'Einfacher: Auf der Seite „Texturpakete“ ZIP-Dateien hochladen, Blockhaus trägt die Felder unten selbst ein. Von Hand geht auch: Das Paket (.zip) muss unter einer öffentlichen URL liegen, z. B. GitHub-Release oder Dropbox-Link mit ?dl=1.', items: [
     { key: 'resource-pack', label: 'Download-URL', type: 'text', def: '', hint: 'Direktlink auf die ZIP-Datei, kein Link zu einer Download-Seite.' },
     { key: 'resource-pack-sha1', label: 'SHA-1-Prüfsumme (optional)', type: 'text', def: '', sha1: true, hint: '40 Zeichen. Der Button lädt das Paket von der URL oben und berechnet sie.' },
     { key: 'require-resource-pack', label: 'Paket verpflichtend', type: 'bool', def: 'false' },
@@ -392,7 +394,8 @@ async function viewOptions(token) {
 
   function build() {
     const cards = SCHEMA.map((g) => h('div', { class: 'card' }, h('h2', {}, g.group),
-      g.note ? h('p', { class: 'muted', style: 'margin-top:-4px' }, g.note) : null, g.items.map(optRow)));
+      g.note ? h('p', { class: 'muted', style: 'margin-top:-4px' }, g.note) : null,
+      g.link ? h('p', {}, h('a', { href: g.link[0] }, g.link[1])) : null, g.items.map(optRow)));
     const others = Object.keys(values).filter((k) => !SCHEMA_KEYS.has(k)).sort();
     const raw = h('details', { class: 'card' }, h('summary', {}, `Alle weiteren Einstellungen (${others.length})`),
       h('p', { class: 'muted' }, 'Rohwerte aus der server.properties. Nur ändern, wenn du weißt, was sie tun.'),
@@ -603,6 +606,8 @@ async function viewSettings() {
     password: h('input', { type: 'password', placeholder: c.hasPassword ? '•••••• gespeichert' : '', autocomplete: 'new-password', 'aria-label': 'Crafty-Passwort' }),
     publicAddress: h('input', { type: 'text', value: c.publicAddress, placeholder: 'z. B. abc-123.gl.at.ply.gg:12345', 'aria-label': 'Öffentliche Adresse' }),
     localAddress: h('input', { type: 'text', value: c.localAddress, placeholder: 'leer = automatisch', 'aria-label': 'Adresse im Heimnetz' }),
+    packBaseUrl: h('input', { type: 'text', value: c.packBaseUrl || '', placeholder: 'leer = die öffentliche Adresse oben', 'aria-label': 'Adresse für Texturpakete' }),
+    packUpstream: h('input', { type: 'text', value: c.packUpstream || '', placeholder: 'host.docker.internal:25565', 'aria-label': 'Minecraft-Server für die Weiterleitung' }),
   };
   const result = h('div', {});
   const field = (label, el, hint) => h('label', { class: 'f' }, h('span', {}, label), el, hint ? h('small', {}, hint) : null);
@@ -643,6 +648,9 @@ async function viewSettings() {
     h('div', { class: 'card' }, h('h2', {}, 'Adressen'),
       field('Öffentliche Adresse für Freunde', f.publicAddress, 'Wird auf der Server-Seite zum Kopieren angezeigt (z. B. von playit.gg).'),
       field('Adresse im Heimnetz', f.localAddress)),
+    h('div', { class: 'card' }, h('h2', {}, 'Texturpakete'),
+      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, 'Nur nötig, wenn die Pakete nicht über die öffentliche Adresse oben kommen, z. B. http://meine-adresse:port. Ohne Eintrag wird die öffentliche Adresse verwendet.'),
+      field('Minecraft-Server für die Weiterleitung', f.packUpstream, 'Blockhaus leitet Minecraft-Verbindungen, die über den Pack-Port kommen, an diese Adresse weiter (Standard: Crafty auf Port 25565).')),
     h('div', { class: 'row' }, h('button', { onclick: test }, 'Verbindung testen'), h('button', { class: 'primary', onclick: save }, 'Speichern')),
     h('div', { style: 'margin-top:14px' }, result));
 }

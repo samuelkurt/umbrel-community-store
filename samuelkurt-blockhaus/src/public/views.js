@@ -300,7 +300,9 @@ async function viewSoftware(token) {
   if (token !== getToken()) return;
   const jobsBox = h('div', {});
   const reload = () => window.BH.route();
-  let kind = d.installed.software && d.kinds.some((k) => k.id === d.installed.software && !k.unsupported) ? d.installed.software : 'vanilla';
+  const want = hashParams().get('kind');
+  let kind = d.kinds.some((k) => k.id === want && !k.unsupported) ? want : d.installed.software && d.kinds.some((k) => k.id === d.installed.software && !k.unsupported) ? d.installed.software : 'vanilla';
+  let stopFirst = true; let startAfter = true;
   let versions = []; let showUnstable = false; let sel = null; let resolved = null; let backup = true;
   const detail = h('div', {});
   const kindsBox = h('div', { class: 'kinds' });
@@ -351,10 +353,10 @@ async function viewSoftware(token) {
     }
     if (downgrade) warnings.push(`Das ist eine ältere Version als die aktuelle (${cur}). Eine Welt, die in einer neueren Version gespielt wurde, kann dadurch beschädigt werden.`);
     if (cur && kind && d.installed.software && d.installed.software !== kind && (MODDED.has(d.installed.software) || MODDED.has(kind))) warnings.push('Beim Wechsel zwischen Mod-Loadern oder zu/von Vanilla bleiben Mods, Plugins und deren Daten im Server-Ordner. Welten mit Mod-Inhalten laufen ohne die Mods nicht richtig.');
-    const btn = h('button', { class: 'primary big', disabled: !sel || d.running || !resolved || !!resolved.error, onclick: async () => {
-      if (!confirm(`${k.label} ${sel} installieren?\n\nDie bisherige Start-Datei bleibt als „${d.jar}.blockhaus-prev“ erhalten.${backup ? '\nVorher wird ein Backup der Welten angelegt.' : '\nOHNE Backup der Welten.'}`)) return;
+    const btn = h('button', { class: 'primary big', disabled: !sel || !resolved || !!resolved.error, onclick: async () => {
+      if (!confirm(`${k.label} ${sel} installieren?\n\n${d.running ? 'Der Server wird dafür gestoppt, verbundene Spieler fliegen raus.\n' : ''}Die bisherige Start-Datei bleibt als „${d.jar}.blockhaus-prev“ erhalten.${backup ? '\nVorher wird ein Backup der Welten angelegt.' : '\nOHNE Backup der Welten.'}`)) return;
       try {
-        const r = await api('POST', P('/software/install'), { kind, version: sel, backup });
+        const r = await api('POST', P('/software/install'), { kind, version: sel, backup, stopFirst: d.running && stopFirst, startAfter: d.running && stopFirst && startAfter });
         const fin = await watchJob(jobsBox, r.job, token);
         if (fin.status === 'done') { toast(`${k.label} ${sel} ist installiert. Starte den Server.`); reload(); }
       } catch (e) { toast(e.message, true); }
@@ -365,12 +367,15 @@ async function viewSoftware(token) {
       resolved && resolved.error ? h('div', { class: 'notice err', style: 'margin-top:10px' }, resolved.error) : null,
       warnings.map((w) => h('div', { class: 'notice warn', style: 'margin-top:10px' }, w)),
       h('label', { class: 'row', style: 'gap:8px;margin:12px 0' }, h('input', { type: 'checkbox', style: 'width:auto', checked: backup, onchange: (e) => { backup = e.target.checked; paintDetail(); } }), 'Vorher ein Backup der Welten anlegen (empfohlen)'),
-      btn));
+      d.running ? h('div', { class: 'notice warn' }, h('div', {}, h('b', {}, 'Der Server läuft.'), ' Die Start-Datei kann nur bei gestopptem Server getauscht werden.',
+        h('label', { class: 'row', style: 'gap:8px;margin-top:8px' }, h('input', { type: 'checkbox', style: 'width:auto', checked: stopFirst, onchange: (e) => { stopFirst = e.target.checked; paintDetail(); } }), 'Server dafür stoppen (Spieler werden getrennt)'),
+        stopFirst ? h('label', { class: 'row', style: 'gap:8px;margin-top:4px' }, h('input', { type: 'checkbox', style: 'width:auto', checked: startAfter, onchange: (e) => { startAfter = e.target.checked; paintDetail(); } }), 'Danach wieder starten') : null)) : null,
+      btn, d.running && !stopFirst ? h('p', { class: 'muted small' }, 'Ohne Stoppen lehnt der Server den Wechsel ab. Stoppe ihn selbst auf der Server-Seite.') : null));
   }
 
   const cur = d.installed;
   put(main, header('Software', 'Minecraft-Version und Server-Software wechseln.'),
-    needStopNotice(d.running), jobsBox,
+    jobsBox,
     h('div', { class: 'card kv' }, h('div', { class: 'k' }, 'Installiert'),
       h('div', { class: 'v' }, (d.kinds.find((k) => k.id === cur.software) || { label: cur.software || 'Unbekannt' }).label + (cur.version ? ' ' + cur.version : '')),
       h('div', { class: 's' }, [cur.build ? 'Build ' + cur.build : null, cur.guessed ? 'geschätzt aus Name der Start-Datei und Crafty' : null, `Start-Datei: ${d.jar}`].filter(Boolean).join(' · '))),
@@ -388,8 +393,14 @@ async function viewMods(token) {
   const reload = () => window.BH.route();
   const mut = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
   if (!d.folder) {
-    put(main, header('Mods & Plugins'), h('div', { class: 'notice warn' }, h('span', {}, d.reason),
-      h('a', { href: '#/software' }, h('button', { class: 'small' }, 'Zur Software-Auswahl'))));
+    put(main, header('Mods & Plugins'), h('div', { class: 'notice warn' }, h('span', {}, d.reason)),
+      h('div', { class: 'card' }, h('h2', {}, 'Zuerst die passende Server-Software wählen'),
+        h('p', { class: 'muted' }, 'Mods brauchen einen Mod-Loader, Plugins einen Plugin-Server. Mit Vanilla geht beides nicht. Der Wechsel dauert ein paar Minuten, deine Welt bleibt erhalten.'),
+        h('div', { class: 'row' },
+          h('a', { href: '#/software?kind=fabric' }, h('button', { class: 'primary' }, 'Fabric (Mods)')),
+          h('a', { href: '#/software?kind=neoforge' }, h('button', {}, 'NeoForge (Mods)')),
+          h('a', { href: '#/software?kind=forge' }, h('button', {}, 'Forge (Mods)')),
+          h('a', { href: '#/software?kind=paper' }, h('button', {}, 'Paper (Plugins)')))));
     return;
   }
   const word = d.kind === 'plugin' ? 'Plugin' : 'Mod';
@@ -516,5 +527,119 @@ async function viewInventory(token) {
   if (d.players.length) show(d.players[0].uuid, d.players[0].name, false);
 }
 
-window.BHViews = { files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory };
+// ---------- Texturpakete ---------------------------------------------------------------------
+async function viewPacks(token) {
+  const d = await api('GET', P('/packs'));
+  if (token !== getToken()) return;
+  const jobsBox = h('div', {});
+  const resultBox = h('div', {});
+  const upBox = h('div', {});
+  const reload = () => window.BH.route();
+  const mut = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+  const copy = (t) => navigator.clipboard && navigator.clipboard.writeText(t).then(() => toast('Kopiert.'));
+  const enabledCount = d.packs.filter((p) => p.enabled).length;
+
+  async function doUpload(fileList) {
+    let ok = 0;
+    for (const f of fileList) {
+      if (!/\.zip$/i.test(f.name)) { toast(`„${f.name}“ ist keine ZIP-Datei.`, true); continue; }
+      const row = h('div', { class: 'card job' }, h('b', {}, `Lade ${f.name} hoch …`));
+      const bar = progressBar(0); row.append(bar); upBox.append(row);
+      try {
+        const r = await uploadRaw(P('/packs/upload?' + q({ name: f.name })), f, (v) => { bar.firstChild.style.width = Math.round(v * 100) + '%'; });
+        ok++;
+        if (r.pack.repaired) toast(`„${r.pack.name}“ war falsch verpackt und wurde repariert.`);
+      } catch (e) { toast(`${f.name}: ${e.message}`, true); }
+      row.remove();
+    }
+    if (ok) reload();
+  }
+
+  const fileInput = h('input', { type: 'file', multiple: true, accept: '.zip,application/zip', style: 'display:none', onchange: () => doUpload([...fileInput.files]) });
+  const dropCard = h('div', { class: 'card dropzone' },
+    h('div', { class: 'row', style: 'justify-content:space-between' },
+      h('div', {}, h('h2', { style: 'margin:0' }, 'Texturpaket hochladen'),
+        h('p', { class: 'muted small', style: 'margin:4px 0 0' }, `ZIP-Dateien hierher ziehen oder auswählen, auch mehrere. Höchstens ${d.maxMb} MB nach dem Zusammenführen.`)),
+      h('button', { class: 'primary', onclick: () => fileInput.click() }, 'ZIP auswählen')), fileInput, upBox);
+  dropCard.addEventListener('dragover', (e) => { e.preventDefault(); dropCard.classList.add('over'); });
+  dropCard.addEventListener('dragleave', () => dropCard.classList.remove('over'));
+  dropCard.addEventListener('drop', (e) => { e.preventDefault(); dropCard.classList.remove('over'); if (e.dataTransfer.files.length) doUpload([...e.dataTransfer.files]); });
+
+  const row = (p, i) => {
+    const mini = (label, fn, extra = {}) => h('button', { class: 'small', ...extra, onclick: mut(fn) }, label);
+    const chips = [];
+    if (p.repaired) chips.push(h('span', { class: 'chip warn', title: p.warnings.join('\n') }, 'Verpackung repariert'));
+    if (p.problems.length) chips.push(h('span', { class: 'chip warn', title: 'Minecraft würde dieses Paket ignorieren:\n' + p.problems.join('\n') + '\n\nBlockhaus korrigiert das beim Veröffentlichen.' }, 'wird repariert'));
+    else if (p.compat === 'too-old') chips.push(h('span', { class: 'chip', title: `Für eine ältere Minecraft-Version gebaut (Server: ${d.expected ? d.expected.mc : '?'}). Minecraft lädt es nach dem Code der 26.3-Version trotzdem, einzelne Texturen können fehlen.` }, 'für ältere Version'));
+    return h('li', { class: p.enabled ? '' : 'disabled' },
+      window.BH.avatar(p.name),
+      h('div', { class: 'nm' }, h('b', {}, p.name), ' ', chips,
+        h('small', {}, p.description || '(ohne Beschreibung)'),
+        h('small', {}, `${fmtSize(p.size)} · Format ${p.formats} · ${p.enabled ? 'aktiv' : 'aus'}`),
+        p.warnings.filter((w) => !/neu verpackt/.test(w)).map((w) => h('small', { class: 'warn-line' }, '⚠ ' + w))),
+      h('div', { class: 'acts' },
+        mini('▲', async () => { await api('POST', P('/packs/move'), { id: p.id, dir: 'up' }); reload(); }, { disabled: i === 0, 'aria-label': 'Nach oben', title: 'Höhere Priorität' }),
+        mini('▼', async () => { await api('POST', P('/packs/move'), { id: p.id, dir: 'down' }); reload(); }, { disabled: i === d.packs.length - 1, 'aria-label': 'Nach unten', title: 'Niedrigere Priorität' }),
+        h('label', { class: 'switch', title: p.enabled ? 'Ausschalten' : 'Einschalten' }, h('input', { type: 'checkbox', checked: p.enabled, 'aria-label': 'Aktiv: ' + p.name, onchange: mut(async () => { await api('POST', P('/packs/toggle'), { id: p.id }); reload(); }) }), h('i')),
+        h('a', { href: '/api' + P('/packs/download?' + q({ id: p.id })), download: p.name + '.zip' }, h('button', { class: 'small' }, 'Laden')),
+        mini('Umbenennen', async () => { const n = prompt('Neuer Name:', p.name); if (!n || n === p.name) return; await api('POST', P('/packs/rename'), { id: p.id, name: n }); reload(); }),
+        mini('Löschen', async () => { if (!confirm(`„${p.name}“ löschen?`)) return; await api('POST', P('/packs/delete'), { id: p.id }); reload(); }, { class: 'small danger' })));
+  };
+
+  const apply = mut(async () => {
+    resultBox.replaceChildren();
+    const r = await api('POST', P('/packs/apply'), {});
+    const fin = await watchJob(jobsBox, r.job, token);
+    if (fin.status !== 'done') return;
+    const x = fin.result;
+    if (x.cleared) toast('Kein Paket mehr eingetragen.'); else toast(`Veröffentlicht (${x.packs} Paket${x.packs === 1 ? '' : 'e'}, ${fmtSize(x.size)}).`);
+    reload();
+  });
+  const check = mut(async () => {
+    resultBox.replaceChildren(h('p', { class: 'muted' }, 'Teste den Download über die öffentliche Adresse …'));
+    const r = await api('POST', P('/packs/check'), {});
+    const fin = await watchJob(jobsBox, r.job, token);
+    const x = fin.result || {};
+    put(resultBox, x.ok
+      ? h('div', { class: 'notice ok' }, h('span', {}, `Der Download klappt über ${x.url}: ${fmtSize(x.bytes)} in ${(x.ms / 1000).toFixed(1)} s (${x.mbps.toFixed(1)} MBit/s), Prüfsumme stimmt.`))
+      : h('div', { class: 'notice err' }, h('span', {}, x.error ? `Von dieser Adresse lässt sich nichts laden: ${x.error}` : 'Die Datei kommt an, aber die Prüfsumme weicht ab. Ein Proxy oder Tunnel verändert die Daten.'),
+        h('span', { class: 'small' }, 'Prüfe die Schritte unter „So kommt das Paket zu deinen Freunden“.')));
+  });
+
+  const ap = d.applied;
+  const addr = d.base.url;
+  const setup = h('details', { class: 'card', open: !ap }, h('summary', {}, h('b', {}, 'So kommt das Paket zu deinen Freunden')),
+    h('p', { class: 'muted' }, 'Minecraft lädt ein Texturpaket von einer Internet-Adresse, der Server selbst schickt nur die Adresse. Blockhaus liefert die Datei deshalb selbst aus, über denselben playit-Tunnel wie Minecraft:'),
+    h('ol', {},
+      h('li', {}, 'Trage unter ', h('a', { href: '#/settings' }, 'Einstellungen'), ' die öffentliche Adresse ein (die Adresse, über die deine Freunde joinen).'),
+      h('li', {}, `Öffne das playit.gg-Dashboard, wähle den Minecraft-Tunnel und ändere dort den lokalen Port von 25565 auf ${d.frontPort || 25566}. Blockhaus nimmt dort alles an, liefert die Pakete aus und reicht Minecraft-Verbindungen unverändert an Crafty weiter (${d.upstream || 'host.docker.internal:25565'}).`),
+      h('li', {}, 'Lade unten ein oder mehrere Pakete hoch, ordne sie und drücke „Veröffentlichen“.'),
+      h('li', {}, 'Mit „Von außen testen“ prüft Blockhaus, ob der Download über die öffentliche Adresse klappt.')),
+    h('p', { class: 'muted small' }, `Direkte Verbindungen im Heimnetz oder über Tailscale auf Port 25565 laufen weiter wie bisher. Fällt Blockhaus aus, können Freunde über playit nicht mehr joinen, bis du den Tunnel-Port zurückstellst oder Blockhaus wieder läuft.`));
+
+  const status = h('div', { class: 'card' }, h('h2', {}, 'Aktuell eingetragen'),
+    !addr ? h('div', { class: 'notice warn' }, h('span', {}, 'Es ist noch keine öffentliche Adresse eingetragen.'), h('a', { href: '#/settings' }, h('button', { class: 'small' }, 'Zu den Einstellungen'))) : null,
+    ap ? h('div', {},
+      ap.url ? h('div', { class: 'addr' }, h('code', {}, ap.url), h('button', { class: 'small', onclick: () => copy(ap.url) }, 'Kopieren')) : null,
+      h('p', { class: 'muted small' }, `${ap.packs.length} Paket${ap.packs.length === 1 ? '' : 'e'} · ${fmtSize(ap.size)} · SHA-1 ${ap.sha1.slice(0, 12)}… · ${fmtDate(ap.at)}${ap.patched ? ' · Format-Angabe repariert' : ''}${ap.overwritten ? ` · ${ap.overwritten} Datei(en) kamen in mehreren Paketen vor, es gilt das obere` : ''}`),
+      ap.inSync ? h('p', { class: 'chip on' }, 'steht in der server.properties')
+        : h('div', { class: 'notice warn' }, 'In der server.properties steht etwas anderes (z. B. von Hand eingetragen oder die Adresse hat sich geändert). „Veröffentlichen“ trägt es neu ein.'),
+      h('div', { class: 'row' }, h('button', { onclick: check, disabled: !addr }, 'Von außen testen'),
+        d.running && ap.inSync ? h('span', { class: 'muted small' }, 'Der Server liest die Einstellung erst nach einem Neustart.') : null))
+      : h('p', { class: 'muted' }, 'Noch nichts veröffentlicht.'),
+    d.current.url && !ap ? h('p', { class: 'muted small' }, `In der server.properties steht bisher von Hand: ${d.current.url}`) : null);
+
+  put(main, header('Texturpakete', 'Pakete hochladen, ordnen und den Spielern direkt von deinem Server anbieten.'),
+    jobsBox, resultBox, setup, status, dropCard,
+    h('div', { class: 'card' }, h('h2', {}, `Pakete (${d.packs.length})`),
+      d.packs.length ? [h('p', { class: 'muted small', style: 'margin-top:-4px' }, 'Reihenfolge wie in Minecraft: Das oberste Paket gewinnt, wenn mehrere dieselbe Textur enthalten. Sprachdateien, Sounds und Atlanten werden zusammengeführt.'),
+        h('ul', { class: 'plist' }, d.packs.map(row)),
+        h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { class: 'primary', onclick: apply, disabled: !addr }, enabledCount ? 'Veröffentlichen und eintragen' : 'Paket entfernen'),
+          h('span', { class: 'muted small' }, enabledCount ? `${enabledCount} aktive${enabledCount === 1 ? 's' : ''} Paket${enabledCount === 1 ? '' : 'e'} werden zu einer Datei zusammengefasst.` : 'Alle sind aus: Das Paket wird aus der server.properties entfernt.')),
+        d.expected && d.expected.style !== 'minor' ? h('p', { class: 'muted small' }, 'Hinweis: Die automatische Reparatur von Pack-Angaben ist für Minecraft 26.x geprüft. Bei älteren Versionen werden die Pakete unverändert verwendet.') : null]
+        : h('div', { class: 'empty' }, 'Noch keine Pakete. Lade oben eine ZIP-Datei hoch.')));
+  resumeJobs(jobsBox, token, () => reload());
+}
+
+window.BHViews = { files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks };
 })();

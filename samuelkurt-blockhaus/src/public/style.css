@@ -205,3 +205,11 @@ textarea.editor { min-height: 60vh; font: 13px/1.45 ui-monospace, SFMono-Regular
 label.row { flex-wrap: nowrap; }
 input[type=checkbox] { width: auto; flex: none; }
 .facts > div { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.chip.warn { background: rgba(217,164,65,.14); border-color: var(--warn); color: var(--warn); cursor: help; }
+.warn-line { color: var(--warn) !important; white-space: normal; }
+.plist li .acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.plist li .acts > * { margin-left: 0; }
+.plist .nm small { white-space: normal; }
+@media (max-width: 760px) { .plist li:has(.acts) { flex-wrap: wrap; } .plist li .acts { width: 100%; justify-content: flex-start; } }
+.addr code { word-break: break-all; }
+.notice { overflow-wrap: anywhere; }

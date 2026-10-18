@@ -1,0 +1,135 @@
+# Blockhaus
+
+German-language, Aternos-style panel for a Minecraft server managed by Crafty Controller 4.
+Owner only, no public page. Friends connect with the normal Minecraft address.
+
+## What is in this version (0.3.1)
+
+| Page | What it does |
+|---|---|
+| Server | Status (Offline / Startet / Online / Stoppt / Abgestürzt), Start, Stop, Restart, force stop, address card with copy button, software, version, memory, world, players online |
+| Optionen | Aternos-style cards for the common `server.properties` keys (game mode, difficulty, whitelist, "Gecrackt", seed, view distance, resource pack URL/SHA-1/required, ...) plus an editor for every other key. Unchanged lines stay byte-identical, a `server.properties.blockhaus.bak` is kept |
+| Spieler | Whitelist, operators, banned players, banned IPs. Kick / op / ban for players who are online |
+| Konsole | Live server output, command line with history |
+| Log | `logs/latest.log` and older `.log` / `.log.gz` files, text filter, warnings-only filter |
+| Inventare | Every player's saved inventory, armor, off-hand, ender chest, health/hunger/level/position (read from `playerdata/*.dat`). For online players "Live vom Server holen" asks the running server (`data get entity`) |
+| Dateien | File manager for the server folder: browse, edit text files, upload (button or drag and drop), download, rename, mkdir, delete. Paths are confined to the server folder |
+| Welten | List with seed, version, game mode, size. Create a new world (name, seed, type, structures), upload a world ZIP (level.dat may be in a subfolder), download a world as ZIP, switch the active world, delete inactive ones. Nether / End folders are handled together |
+| Backups | Worlds or the whole server as ZIP into this app's data folder. Running servers get `save-off` / `save-all flush` first. Restore (takes a safety backup first), download, delete, plus an optional "also trigger Crafty's own backup" |
+| Software | Switch between Vanilla, Snapshot, Paper, Purpur, Fabric, Quilt, NeoForge, Forge and any Minecraft version they support. Downloads are checked against the vendor checksum where one exists. Optional world backup first. On a running server it can stop the server, switch and start it again (checkboxes) |
+| Mods & Plugins | List `mods/` or `plugins/` (by the installed software), enable/disable, delete, upload a jar, search Modrinth and install with required dependencies (sha512 checked) |
+| Texturpakete | Upload several resource-pack ZIPs, order them, publish them as one bundle that your players download directly from Blockhaus. Checks every ZIP (see below) |
+| Einstellungen | Crafty URL, API token (or user + password), public address to show friends, connection test |
+
+### Texture packs
+
+Vanilla supports **one** server pack (`resource-pack` in `server.properties`) and the players' clients download it
+from a URL. Blockhaus therefore:
+
+1. stores your uploaded ZIPs, checks each one and repairs a wrongly packed one (the `pack.mcmeta` lying in a subfolder),
+2. merges the enabled ones into one ZIP (top of the list wins; `lang/*.json`, `sounds.json` and `atlases/*.json` are
+   combined instead of overwritten),
+3. publishes it as `<server>-<sha1>.zip` (a changed pack always gets a new URL) and writes `resource-pack`,
+   `resource-pack-sha1` and `resource-pack-id` into `server.properties`. A restart is needed.
+
+**Why a pack can download but not apply.** The client reads the `pack.mcmeta` of a downloaded server pack and, if it is
+invalid, silently ignores the pack (log: "Invalid pack metadata ..., ignoring all"), with no message in game. Checked
+against the real Minecraft 26.3 code: this happens for a missing `pack.mcmeta` at the ZIP root, a missing `description`,
+and for packs for newer versions that use `pack_format` where 26.x requires `min_format` / `max_format` (or the other way
+round). A *too old* `pack_format` alone does **not** stop a server pack from loading. When the top pack would be
+ignored on your server's version, Blockhaus rewrites the format fields of the published bundle (and says so).
+`src/test/java-verify/` has the scripts that compare this logic with the real parser.
+
+**How the download reaches your friends.** Blockhaus listens on port 25566 (published by the compose file, not behind
+the Umbrel login) and answers `GET /p/<file>.zip` for published packs only. Everything that is not HTTP is forwarded
+unchanged to Crafty (setting "Minecraft-Server für die Weiterleitung", default `host.docker.internal:25565`). So in the
+**playit.gg dashboard change the local port of your Minecraft tunnel from 25565 to 25566**: the same public address then
+serves Minecraft and the pack. The pack URL is `http://<public address>/p/<file>.zip`, built from the public address
+in the settings (or the optional pack address). Direct connections to 25565 (LAN, Tailscale) are unaffected, but while
+the tunnel points at 25566 friends cannot join via playit if Blockhaus is down. "Von außen testen" downloads the pack
+through the public address and compares the SHA-1.
+
+Packs must stay under 250 MB after merging (the client's limit).
+
+Not supported on purpose: **Spigot** (it has to be compiled with BuildTools; use Paper, which runs
+Spigot plugins) and the Aternos "Zugriff" / sharing page.
+
+## Install
+
+1. Publish the store repo (see the README one folder up) and install **Blockhaus** from it.
+   The compose file mounts Crafty's servers folder from
+   `${UMBREL_ROOT}/app-data/denny-crafty/data/servers`. If your Crafty app has another id,
+   change that line in `docker-compose.yml`.
+2. Open the tile. The first screen is **Einstellungen**.
+3. In Crafty create an API key for your user (Crafty has this under your user profile; menu
+   names may differ by version). It needs access to your server and the right to run commands,
+   start/stop and read logs. Paste it into the panel, press **Verbindung testen**, then **Speichern**.
+   Alternatively enter your Crafty username and password under "Statt Token".
+4. Enter your public address (for example the playit.gg one) so the Server page can show it.
+
+If the test says Crafty is unreachable, try `https://host.docker.internal:8443` as the Crafty URL
+(the compose file adds that name), or `https://<Umbrel-IP>:8443`.
+
+The settings, including the token, live in `app-data/samuelkurt-blockhaus/data/config.json`
+(mode 600). They are never part of this repository.
+
+## How it works
+
+- Start/stop/console/status go through Crafty's API v2.
+- `server.properties`, the player lists and logs are read from the server folder directly.
+- While the server runs, player-list changes are sent as console commands (`whitelist add`,
+  `ban`, ...), because the server keeps these lists in memory and would overwrite file edits.
+  While it is stopped, the JSON files are edited directly (UUID from Mojang's API, or the offline
+  UUID if `online-mode=false`).
+- Changing `server.properties` only takes effect after a restart. The panel says so.
+- The container runs as root so it can write into the server folder, and it copies the owner and
+  mode of the file it replaces.
+
+### Software switching
+
+Crafty starts the server with `java ... -jar <executable> nogui`, and its API cannot change that command.
+So Blockhaus **replaces the jar file itself** (the old one stays as `<jar>.blockhaus-prev`).
+Vanilla, Paper, Purpur and Fabric ship a ready server jar. Quilt, Forge and NeoForge only have an
+installer, so the jar is replaced by a tiny launcher (`src/assets/blockhaus-launcher.jar`, source in
+`src/assets/launcher/`). On the first start it runs the installer with Crafty's own Java, then
+starts the real server with the same Java and memory flags. What is installed is recorded in
+`.blockhaus-software.json`.
+
+**Java:** newer Minecraft versions need newer Java (1.21.x: 21, 26.x: 25). The panel tells you which one
+a version needs, but the Java Crafty uses is set in Crafty (server configuration / its Java setting).
+A too-old Java makes the server fail to start.
+
+## Limits
+
+- ZIPs: no ZIP64, so under 65,535 files and under 4 GB per backup / world upload.
+- Uploads go through Umbrel's app proxy; very large files may be refused there. Put them into the
+  server folder via SMB/SSH instead.
+- Mutating actions (restore, switch world, delete world) need a stopped server and say so. Switching software can stop and restart the server itself.
+
+## Verified and not verified
+
+Verified (automated, with real data): texture-pack checks and the published bundle against the real Minecraft 26.3 pack loader (`Pack.readPackMetadata`, the call the client uses for server packs); server.properties round trips; NBT parsing of a real 1.21.4
+`level.dat` and `playerdata`; live inventory equals file inventory on a real server; real installs and
+starts of Vanilla, Paper, Purpur, Fabric, Quilt, Forge and NeoForge for 1.21.4; Modrinth search /
+install / dependencies; ZIP interop with `zip` / `unzip`; browser click-through of every page on
+desktop and phone width.
+
+Not verified: the pack download through the real playit.gg tunnel (HTTP over a tunnel meant for Minecraft, use "Von außen testen"), Umbrel accepting the extra published port, a real Minecraft client applying the pack, pack rules of Minecraft versions older than 26.x (the repair is only applied for 26.x), the real Crafty (API shapes come from its OpenAPI docs, tests use a mock), the Java
+version of your Crafty, large uploads through Umbrel's proxy, the seed location in 26.x worlds,
+inventories of other Minecraft versions than 1.21.4 (the old pre-1.20.5 item format is only covered
+by a synthetic test), Forge/NeoForge/Quilt on versions other than 1.21.4.
+
+## Tests
+
+```bash
+cd src && node --test test/*.test.js
+```
+
+The offline tests run against a mock of the Crafty API (`src/test/mock-crafty.js`) and a temporary
+server folder, with real fixtures from a 1.21.4 server in `src/test/fixtures`. They do not talk to a real Crafty.
+
+```bash
+NET=1 node --test test/net.test.js   # real Mojang / Paper / Purpur / Fabric / Quilt / Forge / NeoForge / Modrinth
+```
+
+downloads a few hundred MB and needs internet.

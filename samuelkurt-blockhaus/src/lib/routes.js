@@ -10,6 +10,7 @@ const worlds = require('./worlds');
 const software = require('./software');
 const mods = require('./mods');
 const inventory = require('./inventory');
+const packs = require('./packs');
 const serverfiles = require('./serverfiles');
 const props = require('./props');
 const state = require('./state');
@@ -243,22 +244,43 @@ async function handle(c) {
       catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw new HttpError(502, 'Die Versionsliste konnte nicht geladen werden: ' + e.message); }
     }
     if (m === 'POST' && rest === 'software/install') {
-      await requireStopped();
       const b = await readJson(req);
       const info = software.kindInfo(b.kind);
       if (!info || info.unsupported) throw new HttpError(400, info ? info.info : 'Unbekannte Software.');
+      const stopFirst = b.stopFirst === true;
+      const startAfter = b.startAfter === true;
+      if (!stopFirst) await requireStopped();
       const id = String(server.server_id);
       const s = await stats();
+      const install = c.installFn || software.install;
+      const poll = c.pollMs || 1500;
       const job = jobs.start('software', id, async (j) => {
         j.title = `${info.label} ${b.version} installieren`;
-        if (b.backup !== false) {
-          const ws = await worlds.listWorlds(dir, null);
-          if (ws.length) {
-            j.message = 'Backup der Welten vor dem Wechsel …';
-            await backups.create({ serverId: id, serverDir: dir, kind: 'worlds', note: `Automatisch vor Wechsel auf ${info.label} ${b.version}`, running: false, job: j, version: s.version || '' });
+        if (await isRunning()) {
+          // Only reachable with stopFirst: a running server cannot have its jar replaced.
+          j.message = 'Stoppe den Server …';
+          await crafty.action(id, 'stop_server');
+          const t0 = Date.now();
+          while (await isRunning()) {
+            if (Date.now() - t0 > 180000) throw new Error('Der Server hat sich nach 3 Minuten nicht beendet. Stoppe ihn in Crafty von Hand und versuche es dann noch einmal.');
+            await new Promise((r2) => setTimeout(r2, poll));
           }
         }
-        return software.install({ dir, server, kind: b.kind, version: String(b.version), job: j });
+        try {
+          if (b.backup !== false) {
+            const ws = await worlds.listWorlds(dir, null);
+            if (ws.length) {
+              j.message = 'Backup der Welten vor dem Wechsel …';
+              await backups.create({ serverId: id, serverDir: dir, kind: 'worlds', note: `Automatisch vor Wechsel auf ${info.label} ${b.version}`, running: false, job: j, version: s.version || '' });
+            }
+          }
+          const res2 = await install({ dir, server, kind: b.kind, version: String(b.version), job: j });
+          if (startAfter) { j.message = 'Starte den Server …'; await crafty.action(id, 'start_server'); }
+          return { ...res2, started: startAfter };
+        } catch (e) {
+          if (s.running) e.message += ' Der Server wurde dafür gestoppt und läuft jetzt nicht. Starte ihn auf der Server-Seite.';
+          throw e;
+        }
       });
       job.title = `${info.label} ${b.version} installieren`;
       return send(res, 202, { job: jobView(job) }), true;
@@ -321,6 +343,93 @@ async function handle(c) {
     const dir = c.dir();
     try { return send(res, 200, inventory.readInventory(dir, activeWorld(dir), r[1])), true; }
     catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw e; }
+  }
+
+  // ---- texture packs ----
+  if (rest === 'packs' || rest.startsWith('packs/')) {
+    const dir = c.dir();
+    const sid = String(server.server_id);
+    const cfg = c.cfg ? c.cfg() : {};
+    const baseUrl = () => {
+      let b = String(cfg.packBaseUrl || '').trim();
+      let source = b ? 'packBaseUrl' : null;
+      if (!b && cfg.publicAddress) { b = String(cfg.publicAddress).trim(); source = 'publicAddress'; }
+      if (!b) return { url: '', source: null };
+      if (!/^https?:\/\//i.test(b)) b = 'http://' + b;
+      return { url: b.replace(/\/+$/, ''), source };
+    };
+    const expectedFormat = async () => {
+      const f = await packs.serverPackFormat(path.join(dir, software.jarNameOf(server)));
+      return f ? { ...f, text: packs.describeFormats({ pack_format: f.format[1] ? f.format : f.format[0] }) } : null;
+    };
+    if (m === 'GET' && rest === 'packs') {
+      const expected = await expectedFormat();
+      const l = packs.list(c.dataDir, sid, expected);
+      const base = baseUrl();
+      const { parsed } = c.readProps(dir);
+      const cur = { url: parsed.values['resource-pack'] || '', sha1: parsed.values['resource-pack-sha1'] || '', id: parsed.values['resource-pack-id'] || '' };
+      let applied = null;
+      if (l.applied) {
+        const url = base.url ? `${base.url}/p/${l.applied.file}` : null;
+        applied = { ...l.applied, url, inSync: !!url && cur.url === url && cur.sha1 === l.applied.sha1 };
+      }
+      return send(res, 200, {
+        packs: l.packs, applied, expected: expected && { format: expected.format, text: expected.text, mc: expected.mc, style: expected.style },
+        base, current: cur, running: await isRunning(), frontPort: c.packPort || null, upstream: cfg.packUpstream || '', maxMb: Math.round(packs.MAX_PACK / 1048576),
+      }), true;
+    }
+    if (m === 'PUT' && rest === 'packs/upload') {
+      requireUploadHeaders();
+      const entry = await wrapFs(() => packs.addPack(c.dataDir, sid, req, String(q('name') || '')));
+      return send(res, 200, { ok: true, pack: entry }), true;
+    }
+    if (m === 'POST' && rest === 'packs/move') { const b = await readJson(req); await wrapFs(async () => packs.move(c.dataDir, sid, String(b.id), b.dir === 'up' ? 'up' : 'down')); return send(res, 200, { ok: true }), true; }
+    if (m === 'POST' && rest === 'packs/toggle') { const b = await readJson(req); const enabled = await wrapFs(async () => packs.toggle(c.dataDir, sid, String(b.id))); return send(res, 200, { ok: true, enabled }), true; }
+    if (m === 'POST' && rest === 'packs/rename') { const b = await readJson(req); await wrapFs(async () => packs.rename(c.dataDir, sid, String(b.id), b.name)); return send(res, 200, { ok: true }), true; }
+    if (m === 'POST' && rest === 'packs/delete') { const b = await readJson(req); await wrapFs(async () => packs.remove(c.dataDir, sid, String(b.id))); return send(res, 200, { ok: true }), true; }
+    if (m === 'GET' && rest === 'packs/download') {
+      const x = await wrapFs(async () => packs.libFile(c.dataDir, sid, String(q('id') || '')));
+      const st = fs.statSync(x.file);
+      res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': st.size, 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(x.name + '.zip')}` });
+      await new Promise((resolve) => fs.createReadStream(x.file).on('error', () => { res.destroy(); resolve(); }).on('end', resolve).pipe(res));
+      return true;
+    }
+    if (m === 'POST' && rest === 'packs/apply') {
+      const b = await readJson(req);
+      const base = baseUrl();
+      if (!base.url) throw new HttpError(400, 'Trage zuerst unter Einstellungen die öffentliche Adresse ein (die Adresse, über die deine Freunde joinen, z. B. von playit.gg). Daraus entsteht die Download-Adresse des Pakets.');
+      const expected = await expectedFormat();
+      if (b.patch && !expected) throw new HttpError(400, 'Die Format-Anpassung braucht eine bekannte Server-Version. Die Version dieses Servers konnte nicht aus der Server-Datei gelesen werden.');
+      const running = await isRunning();
+      const job = jobs.start('packs', sid, async (j) => {
+        j.title = 'Texturpaket veröffentlichen';
+        const ap = await packs.build(c.dataDir, sid, { patch: !!b.patch, expected, job: j });
+        if (!ap) {
+          setProps(dir, { 'resource-pack': '', 'resource-pack-sha1': '', 'resource-pack-id': '' });
+          return { cleared: true, restartNeeded: running };
+        }
+        const url = `${base.url}/p/${ap.file}`;
+        setProps(dir, { 'resource-pack': url, 'resource-pack-sha1': ap.sha1, 'resource-pack-id': ap.id });
+        return { url, sha1: ap.sha1, size: ap.size, packs: ap.packs.length, merged: ap.merged, overwritten: ap.overwritten, patched: ap.patched, restartNeeded: running };
+      });
+      job.title = 'Texturpaket veröffentlichen';
+      return send(res, 202, { job: jobView(job) }), true;
+    }
+    if (m === 'POST' && rest === 'packs/check') {
+      const base = baseUrl();
+      const ap = packs.readIndex(c.dataDir, sid).applied;
+      if (!ap) throw new HttpError(409, 'Es ist noch kein Paket veröffentlicht.');
+      if (!base.url) throw new HttpError(400, 'Keine öffentliche Adresse eingetragen.');
+      const url = `${base.url}/p/${ap.file}`;
+      const job = jobs.start('packs-check', sid, async (j) => {
+        j.title = 'Download von außen testen';
+        j.message = `Lade ${url} …`;
+        try { return { url, ...(await packs.checkUrl(url, ap.sha1)) }; } catch (e) { return { url, ok: false, error: e.message }; }
+      });
+      job.title = 'Download von außen testen';
+      return send(res, 202, { job: jobView(job) }), true;
+    }
+    throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
 
   return false;

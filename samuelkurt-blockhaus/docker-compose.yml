@@ -16,7 +16,13 @@ services:
       PORT: 3000
       DATA_DIR: /data
       SERVERS_DIR: /servers
+      # Public texture-pack download + Minecraft forwarding (see README, "Texture packs").
+      PACK_PORT: 25566
       NODE_ENV: production
+    ports:
+      # Not behind the Umbrel login on purpose: this is what the playit.gg tunnel connects to.
+      # It only serves published pack files and forwards Minecraft traffic to Crafty.
+      - "25566:25566"
     volumes:
       # The panel's own code (copied here from the store when the app is installed).
       - ${APP_DATA_DIR}/src:/app:ro

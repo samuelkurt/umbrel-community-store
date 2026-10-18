@@ -16,6 +16,8 @@ const { Backups } = require('./lib/backups');
 const routes = require('./lib/routes');
 const { hashUrl } = require('./lib/download');
 const software = require('./lib/software');
+const packs = require('./lib/packs');
+const { createPackFront } = require('./lib/packserver');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -59,7 +61,7 @@ function readJson(req, limit = 1024 * 1024) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'public'), lookup = players.mojangLookup, settleMs = 800 } = {}) {
+function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'public'), lookup = players.mojangLookup, settleMs = 800, softwareInstall = software.install } = {}) {
   const config = new Config(dataDir);
   const crafty = new Crafty(() => config.get());
 
@@ -274,7 +276,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
-    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps });
+    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25566 });
     if (handled) return;
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
@@ -344,6 +346,15 @@ if (require.main === module) {
     serversDir: process.env.SERVERS_DIR || '/servers',
   });
   app.listen(port, '0.0.0.0', () => console.log(`Blockhaus läuft auf Port ${port}`));
+  // Public side: texture-pack download (+ forwarding of Minecraft traffic). See lib/packserver.js.
+  const packPort = Number(process.env.PACK_PORT) || 25566;
+  const front = createPackFront({
+    publicDir: packs.publicDir(process.env.DATA_DIR || '/data'),
+    upstream: () => app.config.get().packUpstream,
+    log: (m) => console.warn(m),
+  });
+  front.on('error', (e) => console.error(`Pack-Server auf Port ${packPort} konnte nicht starten: ${e.message}`));
+  front.listen(packPort, '0.0.0.0', () => console.log(`Pack-Server läuft auf Port ${packPort}`));
 }
 
 module.exports = { createApp };

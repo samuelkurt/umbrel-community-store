@@ -10,6 +10,8 @@ const DEFAULTS = {
   password: '',
   publicAddress: '',
   localAddress: '',
+  packBaseUrl: '',
+  packUpstream: 'host.docker.internal:25565',
 };
 
 class Config {
@@ -46,6 +48,8 @@ class Config {
       hasPassword: !!c.password,
       publicAddress: c.publicAddress,
       localAddress: c.localAddress,
+      packBaseUrl: c.packBaseUrl,
+      packUpstream: c.packUpstream,
       configured: this.isConfigured(),
     };
   }
@@ -53,7 +57,7 @@ class Config {
   /** Merge an update. Empty secret strings keep the stored secret; `clearToken`/`clearPassword` remove it. */
   update(patch) {
     const next = { ...this.value };
-    for (const k of ['craftyUrl', 'username', 'publicAddress', 'localAddress']) {
+    for (const k of ['craftyUrl', 'username', 'publicAddress', 'localAddress', 'packBaseUrl', 'packUpstream']) {
       if (typeof patch[k] === 'string') next[k] = patch[k].trim();
     }
     if (typeof patch.insecureTls === 'boolean') next.insecureTls = patch.insecureTls;
