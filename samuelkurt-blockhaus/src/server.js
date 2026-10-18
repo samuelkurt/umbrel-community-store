@@ -19,6 +19,8 @@ const software = require('./lib/software');
 const packs = require('./lib/packs');
 const { createPackFront } = require('./lib/packserver');
 
+const VERSION = '0.4.0';
+
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
@@ -143,7 +145,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
     const p = url.pathname.replace(/^\/api/, '');
     let r;
 
-    if (m === 'GET' && p === '/config') return send(res, 200, config.publicView());
+    if (m === 'GET' && p === '/config') return send(res, 200, { ...config.publicView(), appVersion: VERSION });
     if (m === 'PUT' && p === '/config') {
       const body = await readJson(req);
       config.update(body);

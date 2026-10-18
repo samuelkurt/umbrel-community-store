@@ -14,6 +14,7 @@ const https = require('node:https');
 const { pipeline } = require('node:stream/promises');
 const { Transform } = require('node:stream');
 const zip = require('./zip');
+const { getStream } = require('./download');
 const { chownLike } = require('./fsutil');
 
 // The Minecraft client refuses server packs above 250 MiB.
@@ -485,7 +486,83 @@ function checkUrl(url, expectSha1, { timeout = 120000 } = {}) {
   });
 }
 
+// ---- checking the address that is currently in server.properties -------------------------------------
+
+/** Download `url` into the library folder (temp file). Returns { tmp, size, sha1, contentType, isZip, tooBig }. */
+async function fetchToTemp(dataDir, sid, url) {
+  const p = paths(dataDir, sid);
+  fs.mkdirSync(p.lib, { recursive: true });
+  const res = await getStream(url, { timeout: 60000 });
+  const tmp = path.join(p.lib, `.probe-${crypto.randomBytes(4).toString('hex')}.tmp`);
+  const h = crypto.createHash('sha1');
+  let n = 0; let head = Buffer.alloc(0); let tooBig = false;
+  const out = fs.createWriteStream(tmp);
+  try {
+    await new Promise((resolve, reject) => {
+      res.on('data', (c) => {
+        n += c.length;
+        if (head.length < 16) head = Buffer.concat([head, c]).subarray(0, 16);
+        if (n > MAX_PACK) { tooBig = true; res.destroy(); return; }
+        h.update(c);
+        if (!out.write(c)) { res.pause(); out.once('drain', () => res.resume()); }
+      });
+      res.on('close', () => out.end(resolve));
+      res.on('error', (e) => { if (!tooBig) reject(e); });
+      out.on('error', reject);
+    });
+  } catch (e) { out.destroy(); await fsp.rm(tmp, { force: true }); throw e; }
+  return { tmp, size: n, sha1: tooBig ? null : h.digest('hex'), contentType: String(res.headers['content-type'] || ''), isZip: head[0] === 0x50 && head[1] === 0x4b, head: head.toString('latin1'), tooBig };
+}
+
+/**
+ * Looks at the pack a URL serves the way a player's Minecraft would and says why it would (not) be used.
+ * `configuredSha1` is what server.properties says. Returns { findings[{level,text}], ... } and leaves no files behind.
+ */
+async function probeUrl(dataDir, sid, url, configuredSha1, expected) {
+  const f = await fetchToTemp(dataDir, sid, url);
+  try {
+    const rep = { url, size: f.size, sha1: f.sha1, contentType: f.contentType, configuredSha1: configuredSha1 || '', findings: [], pack: null, description: '' };
+    const add = (level, text) => rep.findings.push({ level, text });
+    if (f.tooBig) { add('err', `Die Datei ist größer als 250 MB. Der Minecraft-Client bricht den Download dann ab. Nutze ein kleineres Paket.`); return rep; }
+    if (!f.isZip) {
+      add('err', /html/i.test(f.contentType) || /^\s*</.test(f.head)
+        ? `Die Adresse liefert eine Webseite statt einer ZIP-Datei (${f.contentType || 'HTML'}). Das passiert bei Dropbox-, Google-Drive- oder GitHub-Seitenlinks. Minecraft braucht den Direktlink auf die ZIP-Datei.`
+        : `Die Adresse liefert keine ZIP-Datei (${f.contentType || 'unbekannter Typ'}).`);
+      return rep;
+    }
+    if (configuredSha1) {
+      if (!/^[0-9a-f]{40}$/i.test(configuredSha1)) add('err', 'Die SHA-1-Prüfsumme in der server.properties ist keine gültige 40-stellige Hex-Zahl. Der Server ignoriert sie dann.');
+      else if (configuredSha1.toLowerCase() !== f.sha1) add('err', `Die Prüfsumme in der server.properties (${configuredSha1.toLowerCase().slice(0, 12)}…) passt nicht zur Datei, die die Adresse liefert (${f.sha1.slice(0, 12)}…). Der Client verwirft das Paket dann nach dem Download. Genau so sieht „wird geladen, aber nicht angewendet“ aus.`);
+      else add('ok', 'Die Prüfsumme in der server.properties passt zur Datei.');
+    } else add('warn', 'In der server.properties steht keine Prüfsumme. Dann lädt der Client ein geändertes Paket unter derselben Adresse nur neu, wenn sich der Name ändert.');
+    const info = await inspect(f.tmp);
+    rep.pack = info.pack; rep.description = info.description;
+    for (const e of info.errors) add('err', e);
+    if (!info.errors.length) {
+      if (info.prefix) add('err', `Die pack.mcmeta liegt im Unterordner „${info.prefix}“ statt ganz oben im ZIP. Minecraft erkennt das Paket so nicht und ignoriert es stillschweigend.`);
+      const rest = info.warnings.filter((w) => !/Unterordner/.test(w));
+      for (const w of rest) add('warn', w);
+      if (expected && expected.style === 'minor') for (const pr of metaProblems(info.pack || {}, info.hasDescription)) add('err', `Die pack.mcmeta ist für Minecraft ${expected.mc || '26.x'} fehlerhaft: ${pr}`);
+    }
+    if (!rep.findings.some((x) => x.level === 'err')) add('ok', 'Die Datei sieht für Minecraft in Ordnung aus. Erscheint das Paket trotzdem nicht, liegt es am Client: Schau in dessen Log (logs/latest.log) nach Zeilen mit „pack“ oder „resource“.');
+    rep.importable = !info.errors.length;
+    return rep;
+  } finally { await fsp.rm(f.tmp, { force: true }); }
+}
+
+/** Fetch the pack from `url` and put it into the library (the same checks and repairs as an upload). */
+async function importUrl(dataDir, sid, url) {
+  const f = await fetchToTemp(dataDir, sid, url);
+  try {
+    if (f.tooBig) throw bad('Die Datei ist größer als 250 MB.', 413);
+    if (!f.isZip) throw bad('Die Adresse liefert keine ZIP-Datei.', 422);
+    let base = 'Importiertes Paket';
+    try { base = decodeURIComponent(path.basename(new URL(url).pathname)).replace(/\.zip$/i, '') || base; } catch { /* keep default */ }
+    return await addPack(dataDir, sid, fs.createReadStream(f.tmp), base + '.zip');
+  } finally { await fsp.rm(f.tmp, { force: true }); }
+}
+
 module.exports = {
   MAX_PACK, PUBLIC_RE, sidOf, paths, publicDir, readIndex, inspect, addPack, list, move, toggle, rename, remove, libFile,
-  build, checkUrl, serverPackFormat, compat, formatRange, metaProblems, mergeJson, patchFormat, describeFormats,
+  build, checkUrl, probeUrl, importUrl, serverPackFormat, compat, formatRange, metaProblems, mergeJson, patchFormat, describeFormats,
 };

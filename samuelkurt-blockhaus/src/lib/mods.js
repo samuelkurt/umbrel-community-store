@@ -183,4 +183,84 @@ async function installFromModrinth({ dir, lay, mcVersion, project, job, depth = 
   return written;
 }
 
-module.exports = { layout, list, toggle, remove, search, installFromModrinth, jarMeta, FILE_RE, LOADERS, MANIFEST };
+// ---- curated performance list -----------------------------------------------------------------------
+// Only mods that exist on Modrinth with a build for the server's loader AND Minecraft version are shown, so the list
+// is empty for what does not exist (e.g. Lithium has no Forge build). Texts follow the Modrinth descriptions.
+const RECOMMENDED = [
+  { slugs: ['lithium'], note: 'Optimiert die Spiel-Logik (Mobs, Chunks, Physik), ohne das Spielgefühl zu ändern.' },
+  { slugs: ['ferrite-core'], note: 'Spart Arbeitsspeicher.' },
+  { slugs: ['servercore'], note: 'Optimiert den Server an vielen Stellen.' },
+  { slugs: ['modernfix'], note: 'Weniger Speicherverbrauch, schnellerer Start, viele Fehlerbehebungen.' },
+  { slugs: ['c2me-fabric'], note: 'Verbessert die Chunk-Leistung (Fabric).' },
+  { slugs: ['vmp-fabric'], note: 'Hilft bei vielen Spielern gleichzeitig (Fabric).' },
+  { slugs: ['krypton'], note: 'Optimiert den Netzwerk-Teil von Minecraft.' },
+  { slugs: ['noisium'], note: 'Schnellere Welt-Generierung.' },
+  { slugs: ['ksyxis'], note: 'Schnelleres Laden der Welt: lädt unnötige Chunks nicht.' },
+  { slugs: ['clumps', 'ly-clumps'], note: 'Fasst Erfahrungskugeln zusammen, das spart Lag.' },
+  { slugs: ['ai-improvements'], note: 'Schnellere Mob-KI, einzelne KI-Verhalten lassen sich abschalten.' },
+  { slugs: ['adaptive-performance-tweaks'], note: 'Passt Server-Einstellungen automatisch an, damit die TPS stabil bleiben.' },
+  { slugs: ['memoryleakfix'], note: 'Behebt Speicherlecks.' },
+  { slugs: ['chunky'], note: 'Berechnet die Welt vorab, dann gibt es weniger Ruckler beim Erkunden. Läuft nur, wenn du es startest.' },
+  { slugs: ['spark'], note: 'Messwerkzeug: zeigt, was den Server bremst. Macht nicht selbst schneller.' },
+];
+const ALT_LOADER = { forge: 'neoforge' };
+
+async function pool(items, n, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); }
+  }));
+  return out;
+}
+
+async function recommended(dir, lay, mcVersion) {
+  if (!lay.folder) throw bad(lay.reason || 'Keine Mods/Plugins möglich.');
+  const ids = [...new Set(RECOMMENDED.flatMap((g) => g.slugs))];
+  const projects = await getJson(`${MODRINTH}/projects?ids=${encodeURIComponent(JSON.stringify(ids))}`);
+  const bySlug = new Map(projects.map((p) => [p.slug, p]));
+  const manifest = readManifest(dir);
+  const known = new Set(Object.values(manifest.files).map((f) => f.project));
+  let jars = [];
+  // jar names start with the mod's name ("ferritecore-9.0.0-neoforge.jar"); compare without separators or leading [1.20.1] tags
+  const loose = (t) => t.toLowerCase().replace(/^(\[[^\]]*\]|\([^)]*\))+/, '').replace(/[^a-z0-9]/g, '');
+  try { jars = fs.readdirSync(path.join(dir, lay.folder)).map(loose); } catch { /* no folder yet */ }
+  const altLoader = ALT_LOADER[lay.software];
+  const lookup = async (g) => {
+    for (const slug of g.slugs) {
+      const p = bySlug.get(slug);
+      if (!p) continue;
+      let v = null;
+      try { v = await pickVersion(slug, lay, mcVersion); } catch { /* Modrinth hiccup: treat as not available */ }
+      if (v) {
+        const base = slug.replace(/^ly-/, '').replace(/-(fabric|forge|neoforge)$/, '');
+        return { ok: true, item: {
+          slug, project: p.id, title: p.title, note: g.note, version: v.version_number, versionType: v.version_type,
+          server: p.server_side, client: p.client_side, icon: p.icon_url || null,
+          installed: known.has(p.id) || known.has(slug) || jars.some((n) => n.startsWith(loose(base))),
+        } };
+      }
+    }
+    // not available for this loader: is it for the alternative loader?
+    let alt = false;
+    if (altLoader) {
+      for (const slug of g.slugs) {
+        if (!bySlug.get(slug)) continue;
+        try { if (await pickVersion(slug, { loaders: [altLoader] }, mcVersion)) { alt = true; break; } } catch { /* ignore */ }
+      }
+    }
+    const p0 = g.slugs.map((s) => bySlug.get(s)).find(Boolean);
+    // Fabric-only mods are not "missing" on Forge, they just do not apply there
+    const fabricOnly = g.slugs.every((s) => /-fabric$/.test(s)) && !lay.loaders.includes('fabric');
+    return { ok: false, title: p0 ? p0.title : g.slugs[0], alt, skip: fabricOnly };
+  };
+  const res = await pool(RECOMMENDED, 5, lookup);
+  return {
+    items: res.filter((x) => x.ok).map((x) => x.item),
+    // for plugin servers the list of unavailable mods would only be noise
+    missing: lay.kind === 'plugin' ? [] : res.filter((x) => !x.ok && x.title && !x.skip).map((x) => x.title),
+    alt: altLoader ? { loader: altLoader, titles: res.filter((x) => !x.ok && x.alt).map((x) => x.title) } : null,
+  };
+}
+
+module.exports = { layout, list, toggle, remove, search, recommended, installFromModrinth, jarMeta, FILE_RE, LOADERS, MANIFEST };

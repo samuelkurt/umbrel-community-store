@@ -4,7 +4,7 @@ name: Blockhaus
 tagline: Aternos-style control panel for your Crafty Controller server
 icon: https://raw.githubusercontent.com/samuelkurt/umbrel-community-store/main/samuelkurt-blockhaus/icon.svg
 category: gaming
-version: "0.3.1"
+version: "0.4.0"
 port: 3988
 description: >-
   A German-language control panel for the Minecraft server you run in Crafty
@@ -12,7 +12,7 @@ description: >-
   options, player lists, player inventories, file manager, worlds (upload,
   generate, seed), backups, switching server software and version (Vanilla,
   Paper, Purpur, Fabric, Quilt, NeoForge, Forge), mods/plugins from Modrinth and
-  texture packs served straight from your server.
+  texture packs served straight from your server and a setup page for Simple Voice Chat.
 
 
   Blockhaus talks to Crafty through its API and reads the server folder
@@ -30,7 +30,7 @@ repo: https://github.com/samuelkurt/umbrel-community-store
 support: https://github.com/samuelkurt/umbrel-community-store/issues
 gallery: []
 releaseNotes: >-
-  0.3.1: software switch can stop and restart a running server; Mods page links to the loaders. 0.3.0 adds texture packs: upload several ZIPs, merge them and serve them to players directly (needs the playit tunnel port set to 25566).
+  0.4.0: Voice Chat page (port and voice_host for playit), "Schneller" tab with performance mods for your loader and version, check and import of a hand-entered texture pack address, second-tunnel option for packs. 0.3.1: software switch can stop and restart a running server; Mods page links to the loaders. 0.3.0 adds texture packs: upload several ZIPs, merge them and serve them to players directly (needs the playit tunnel port set to 25566).
 dependencies: []
 path: ""
 defaultUsername: ""

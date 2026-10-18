@@ -69,6 +69,7 @@ const ICONS = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
   archive: '<path d="M4 5h16v4H4zM5.5 9v10h13V9M10 13h4"/>',
   cube: '<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M12 12 20 7.5M12 12v9M12 12 4 7.5"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
   puzzle: '<path d="M10 4a2 2 0 1 1 4 0v2h4v4h-2a2 2 0 1 0 0 4h2v4h-4v-2a2 2 0 1 0-4 0v2H6v-4h2a2 2 0 1 0 0-4H6V6h4z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
@@ -102,6 +103,7 @@ const ROUTES = [
   { id: 'software', label: 'Software', icon: 'cube', view: (t) => window.BHViews.software(t) },
   { id: 'mods', label: 'Mods & Plugins', icon: 'puzzle', view: (t) => window.BHViews.mods(t) },
   { id: 'packs', label: 'Texturpakete', icon: 'image', view: (t) => window.BHViews.packs(t) },
+  { id: 'voice', label: 'Voice Chat', icon: 'mic', view: (t) => window.BHViews.voice(t) },
   { id: 'sep' },
   { id: 'settings', label: 'Einstellungen', icon: 'gear', view: viewSettings },
 ];
@@ -638,6 +640,7 @@ async function viewSettings() {
   }
   put(main, 
     h('div', { class: 'head' }, h('h1', {}, 'Einstellungen')),
+    h('p', { class: 'sub' }, 'Blockhaus Version ' + (c.appVersion || '?')),
     !c.configured ? h('div', { class: 'notice warn' }, 'Willkommen im Blockhaus. Verbinde zuerst Crafty Controller: Token erzeugen unter Crafty → Dein Benutzer → API-Schlüssel, oder Benutzer und Passwort eintragen.') : null,
     h('div', { class: 'card' }, h('h2', {}, 'Crafty Controller'),
       field('Crafty-URL', f.craftyUrl, 'Standard im Umbrel-Netz: https://crafty_container:8443'),
@@ -649,7 +652,7 @@ async function viewSettings() {
       field('Öffentliche Adresse für Freunde', f.publicAddress, 'Wird auf der Server-Seite zum Kopieren angezeigt (z. B. von playit.gg).'),
       field('Adresse im Heimnetz', f.localAddress)),
     h('div', { class: 'card' }, h('h2', {}, 'Texturpakete'),
-      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, 'Nur nötig, wenn die Pakete nicht über die öffentliche Adresse oben kommen, z. B. http://meine-adresse:port. Ohne Eintrag wird die öffentliche Adresse verwendet.'),
+      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, 'Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port 25566, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port 25566 zeigen.'),
       field('Minecraft-Server für die Weiterleitung', f.packUpstream, 'Blockhaus leitet Minecraft-Verbindungen, die über den Pack-Port kommen, an diese Adresse weiter (Standard: Crafty auf Port 25565).')),
     h('div', { class: 'row' }, h('button', { onclick: test }, 'Verbindung testen'), h('button', { class: 'primary', onclick: save }, 'Speichern')),
     h('div', { style: 'margin-top:14px' }, result));

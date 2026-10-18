@@ -9,6 +9,7 @@ const files = require('./files');
 const worlds = require('./worlds');
 const software = require('./software');
 const mods = require('./mods');
+const voicechat = require('./voicechat');
 const inventory = require('./inventory');
 const packs = require('./packs');
 const serverfiles = require('./serverfiles');
@@ -307,6 +308,10 @@ async function handle(c) {
       const r2 = await wrapFs(() => files.upload(fdir, '', name, req, { overwrite: q('overwrite') === '1', maxBytes: 512 * 1024 * 1024 }));
       return send(res, 200, { ok: true, ...r2 }), true;
     }
+    if (m === 'GET' && rest === 'mods/recommended') {
+      try { return send(res, 200, { ...(await mods.recommended(dir, lay, mcVersion)), software: lay.software, mcVersion }), true; }
+      catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw new HttpError(502, 'Modrinth ist nicht erreichbar: ' + e.message); }
+    }
     if (m === 'GET' && rest === 'mods/search') {
       try { return send(res, 200, await mods.search(lay, mcVersion, { query: q('q') || '', offset: q('offset') || 0 })), true; }
       catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw new HttpError(502, 'Modrinth ist nicht erreichbar: ' + e.message); }
@@ -323,6 +328,21 @@ async function handle(c) {
       return send(res, 202, { job: jobView(job) }), true;
     }
     throw new HttpError(404, 'Unbekannter Endpunkt.');
+  }
+
+  // ---- voice chat (Simple Voice Chat config) ----
+  if (rest === 'voicechat') {
+    const dir = c.dir();
+    if (m === 'GET') {
+      const { parsed } = c.readProps(dir);
+      return send(res, 200, { ...voicechat.read(dir), running: await isRunning(), mcPort: parsed.values['server-port'] || '25565', suggestedPort: 19132 }), true;
+    }
+    if (m === 'POST') {
+      const b = await readJson(req);
+      let r2;
+      try { r2 = voicechat.write(dir, b); } catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw e; }
+      return send(res, 200, { ok: true, ...r2, restartNeeded: await isRunning() }), true;
+    }
   }
 
   // ---- inventories ----
@@ -427,6 +447,34 @@ async function handle(c) {
         try { return { url, ...(await packs.checkUrl(url, ap.sha1)) }; } catch (e) { return { url, ok: false, error: e.message }; }
       });
       job.title = 'Download von außen testen';
+      return send(res, 202, { job: jobView(job) }), true;
+    }
+    if (m === 'POST' && rest === 'packs/probe') {
+      const { parsed } = c.readProps(dir);
+      const url = String(parsed.values['resource-pack'] || '');
+      if (!url) throw new HttpError(409, 'In der server.properties ist kein Texturpaket eingetragen.');
+      const sha = String(parsed.values['resource-pack-sha1'] || '');
+      const expected = await expectedFormat();
+      const job = jobs.start('packs-probe', sid, async (j) => {
+        j.title = 'Eingetragene Adresse prüfen';
+        j.message = `Lade ${url} …`;
+        try { return await packs.probeUrl(c.dataDir, sid, url, sha, expected); }
+        catch (e) { return { url, error: e.message, findings: [] }; }
+      });
+      job.title = 'Eingetragene Adresse prüfen';
+      return send(res, 202, { job: jobView(job) }), true;
+    }
+    if (m === 'POST' && rest === 'packs/import-current') {
+      const { parsed } = c.readProps(dir);
+      const url = String(parsed.values['resource-pack'] || '');
+      if (!url) throw new HttpError(409, 'In der server.properties ist kein Texturpaket eingetragen.');
+      const job = jobs.start('packs-import', sid, async (j) => {
+        j.title = 'Paket von der eingetragenen Adresse übernehmen';
+        j.message = `Lade ${url} …`;
+        const pack = await packs.importUrl(c.dataDir, sid, url);
+        return { pack };
+      });
+      job.title = 'Paket von der eingetragenen Adresse übernehmen';
       return send(res, 202, { job: jobView(job) }), true;
     }
     throw new HttpError(404, 'Unbekannter Endpunkt.');

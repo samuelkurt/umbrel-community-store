@@ -3,7 +3,7 @@
 German-language, Aternos-style panel for a Minecraft server managed by Crafty Controller 4.
 Owner only, no public page. Friends connect with the normal Minecraft address.
 
-## What is in this version (0.3.1)
+## What is in this version (0.4.0)
 
 | Page | What it does |
 |---|---|
@@ -17,9 +17,10 @@ Owner only, no public page. Friends connect with the normal Minecraft address.
 | Welten | List with seed, version, game mode, size. Create a new world (name, seed, type, structures), upload a world ZIP (level.dat may be in a subfolder), download a world as ZIP, switch the active world, delete inactive ones. Nether / End folders are handled together |
 | Backups | Worlds or the whole server as ZIP into this app's data folder. Running servers get `save-off` / `save-all flush` first. Restore (takes a safety backup first), download, delete, plus an optional "also trigger Crafty's own backup" |
 | Software | Switch between Vanilla, Snapshot, Paper, Purpur, Fabric, Quilt, NeoForge, Forge and any Minecraft version they support. Downloads are checked against the vendor checksum where one exists. Optional world backup first. On a running server it can stop the server, switch and start it again (checkboxes) |
-| Mods & Plugins | List `mods/` or `plugins/` (by the installed software), enable/disable, delete, upload a jar, search Modrinth and install with required dependencies (sha512 checked) |
+| Mods & Plugins | List `mods/` or `plugins/` (by the installed software), enable/disable, delete, upload a jar, search Modrinth and install with required dependencies (sha512 checked). Tab "Schneller": a curated list of performance mods (Lithium, FerriteCore, ServerCore, ModernFix, Ksyxis, Clumps, Chunky, spark, ...) that shows only what Modrinth really has for your loader and Minecraft version, with a hint when the other loader has more |
 | Texturpakete | Upload several resource-pack ZIPs, order them, publish them as one bundle that your players download directly from Blockhaus. Checks every ZIP (see below) |
-| Einstellungen | Crafty URL, API token (or user + password), public address to show friends, connection test |
+| Voice Chat | Finds Simple Voice Chat in `mods/`/`plugins/`, shows its config and the port from the server log, and sets `port` and `voice_host` in `config/voicechat/voicechat-server.properties` (rest of the file untouched, `.blockhaus.bak` kept). Explains the three things a tunnel setup needs (see below) |
+| Einstellungen | Version of Blockhaus, Crafty URL, API token (or user + password), public address to show friends, connection test |
 
 ### Texture packs
 
@@ -40,7 +41,18 @@ round). A *too old* `pack_format` alone does **not** stop a server pack from loa
 ignored on your server's version, Blockhaus rewrites the format fields of the published bundle (and says so).
 `src/test/java-verify/` has the scripts that compare this logic with the real parser.
 
-**How the download reaches your friends.** Blockhaus listens on port 25566 (published by the compose file, not behind
+**"Von Hand eingetragene Adresse".** If `server.properties` already has a `resource-pack` URL that Blockhaus did not publish (typical:
+typed in under Optionen), the Texturpakete page shows it and can *check* it: Blockhaus downloads the file from that
+address and reports what a client would do with it (webpage instead of ZIP, SHA-1 does not match the file, `pack.mcmeta`
+in a subfolder or invalid for 26.x, over 250 MB). "In meine Pakete übernehmen" then imports that file into the library
+(repaired if needed). A server log line `resource-pack-id missing` means such a hand-entered address is in use; pack
+hosting by Blockhaus always writes an id.
+
+**Second tunnel (recommended) or tunnel switch.** The pack port can be reached over a *second* playit tunnel (Custom TCP,
+local 127.0.0.1:25566, address entered as "Download-Adresse für Pakete" in the settings); Minecraft then stays untouched.
+The other way is the single-tunnel setup below.
+
+**How the download reaches your friends (single tunnel).** Blockhaus listens on port 25566 (published by the compose file, not behind
 the Umbrel login) and answers `GET /p/<file>.zip` for published packs only. Everything that is not HTTP is forwarded
 unchanged to Crafty (setting "Minecraft-Server für die Weiterleitung", default `host.docker.internal:25565`). So in the
 **playit.gg dashboard change the local port of your Minecraft tunnel from 25565 to 25566**: the same public address then
@@ -85,6 +97,15 @@ The settings, including the token, live in `app-data/samuelkurt-blockhaus/data/c
 - The container runs as root so it can write into the server folder, and it copies the owner and
   mode of the file it replaces.
 
+### Voice chat behind playit.gg
+Simple Voice Chat does not use the Minecraft connection. The server opens a **UDP** port (default 24454) and tells
+clients to use `voice_host`, or, if that is empty, the address they joined with. Three things are needed: a UDP port that
+Crafty publishes to the host, a UDP tunnel in playit.gg (protocol "MC: Simple Voice Chat", local 127.0.0.1) that points at
+it, and `voice_host=<playit address:port>`. The Crafty app in Denny's store (read from its `docker-compose.yml` on GitHub,
+not from your machine) publishes TCP 25500-25600 and UDP 19132 only, so Blockhaus suggests setting the voice port to
+19132 (the Bedrock port). Everything on the Voice Chat page is an edit of the two config values; the tunnel is made in
+the playit dashboard.
+
 ### Software switching
 
 Crafty starts the server with `java ... -jar <executable> nogui`, and its API cannot change that command.
@@ -114,7 +135,7 @@ starts of Vanilla, Paper, Purpur, Fabric, Quilt, Forge and NeoForge for 1.21.4; 
 install / dependencies; ZIP interop with `zip` / `unzip`; browser click-through of every page on
 desktop and phone width.
 
-Not verified: the pack download through the real playit.gg tunnel (HTTP over a tunnel meant for Minecraft, use "Von außen testen"), Umbrel accepting the extra published port, a real Minecraft client applying the pack, pack rules of Minecraft versions older than 26.x (the repair is only applied for 26.x), the real Crafty (API shapes come from its OpenAPI docs, tests use a mock), the Java
+Not verified: that voice chat then connects through playit (no client or tunnel here; the Crafty port list comes from a GitHub file and your installed version may differ), that the performance mods run on your server (only that Modrinth lists a release for your loader and version), the pack download through the real playit.gg tunnel (HTTP over a tunnel meant for Minecraft, use "Von außen testen"), Umbrel accepting the extra published port, a real Minecraft client applying the pack, pack rules of Minecraft versions older than 26.x (the repair is only applied for 26.x), the real Crafty (API shapes come from its OpenAPI docs, tests use a mock), the Java
 version of your Crafty, large uploads through Umbrel's proxy, the seed location in 26.x worlds,
 inventories of other Minecraft versions than 1.21.4 (the old pre-1.20.5 item format is only covered
 by a synthetic test), Forge/NeoForge/Quilt on versions other than 1.21.4.

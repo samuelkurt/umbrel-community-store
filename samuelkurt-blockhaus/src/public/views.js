@@ -425,6 +425,34 @@ async function viewMods(token) {
         h('label', { class: 'switch', title: m.enabled ? 'Aktiv' : 'Deaktiviert' }, h('input', { type: 'checkbox', checked: m.enabled, 'aria-label': (m.name || m.file) + ' aktiv', onchange: mut(async () => { await api('POST', P('/mods/toggle'), { file: m.file }); reload(); }) }), h('i')),
         h('button', { class: 'small danger', onclick: mut(async () => { if (!confirm(`${m.name || m.file} löschen?`)) return; await api('POST', P('/mods/delete'), { file: m.file }); reload(); }) }, 'Löschen')))) : h('div', { class: 'empty' }, `Noch keine ${word}s installiert.`)));
 
+  const installBtn = (project) => h('button', { class: 'small primary', onclick: mut(async () => {
+    const j = await api('POST', P('/mods/install'), { project });
+    const fin = await watchJob(jobsBox, j.job, token);
+    if (fin.status === 'done') { toast(fin.result.files.length ? `Installiert: ${fin.result.files.join(', ')}` : 'Schon installiert.'); reload(); }
+  }) }, 'Installieren');
+
+  const perf = async () => {
+    put(body, h('p', { class: 'muted' }, 'Suche passende Mods auf Modrinth …'));
+    let r;
+    try { r = await api('GET', P('/mods/recommended')); } catch (e) { put(body, h('div', { class: 'notice err' }, e.message)); return; }
+    if (token !== getToken() || tab !== 'perf') return;
+    const where = `${d.software ? d.software[0].toUpperCase() + d.software.slice(1) : 'deine Software'}${d.mcVersion ? ' ' + d.mcVersion : ''}`;
+    const side = (x) => (x.client === 'unsupported' ? h('span', { class: 'chip on', title: 'Nur auf dem Server nötig. Deine Freunde müssen nichts installieren.' }, 'nur Server')
+      : x.client === 'required' ? h('span', { class: 'chip warn', title: 'Alle Spieler brauchen diesen Mod ebenfalls.' }, 'auch bei Spielern nötig')
+        : h('span', { class: 'chip', title: 'Bei den Spielern optional.' }, 'bei Spielern optional'));
+    put(body,
+      h('div', { class: 'card' }, h('h2', {}, 'Für bessere Leistung'),
+        h('p', { class: 'muted small', style: 'margin-top:-4px' }, `Gezeigt wird nur, wofür es auf Modrinth wirklich eine Fassung für ${where} gibt. Sie werden mit ihren Abhängigkeiten installiert, der Server muss danach neu starten.`),
+        r.items.length ? h('ul', { class: 'plist' }, r.items.map((x) => h('li', {},
+          x.icon ? h('img', { src: x.icon, alt: '', width: 40, height: 40, loading: 'lazy', referrerpolicy: 'no-referrer', style: 'border-radius:8px' }) : h('div', { class: 'avatar' }, x.title.slice(0, 1)),
+          h('div', { class: 'nm' }, h('b', {}, x.title), ' ', side(x), x.versionType !== 'release' ? h('span', { class: 'chip warn', title: 'Noch keine fertige Version, nur Beta oder Alpha.' }, x.versionType) : null, h('small', {}, x.note + ' · ' + x.version)),
+          x.installed ? h('span', { class: 'chip on' }, 'installiert') : installBtn(x.project))))
+          : h('div', { class: 'empty' }, `Für ${where} gibt es keine dieser Mods.`)),
+      r.alt && r.alt.titles.length ? h('div', { class: 'notice' }, h('span', {}, `Für ${r.alt.loader === 'neoforge' ? 'NeoForge' : r.alt.loader}${d.mcVersion ? ' ' + d.mcVersion : ''} gibt es mehr davon: ${r.alt.titles.join(', ')}. Ein Wechsel unter „Software“ behält die Welt, aber deine Mods müssen dann NeoForge-Fassungen sein.`),
+        h('a', { href: '#/software?kind=' + r.alt.loader }, h('button', { class: 'small' }, 'Zu Software'))) : null,
+      r.missing.length ? h('p', { class: 'muted small' }, `Nicht für ${where} verfügbar: ${r.missing.join(', ')}.`) : null);
+  };
+
   const search = () => {
     const input = h('input', { type: 'text', placeholder: `${word}s auf Modrinth suchen …`, 'aria-label': 'Suche', onkeydown: (e) => { if (e.key === 'Enter') run(); } });
     const results = h('div', {});
@@ -435,11 +463,7 @@ async function viewMods(token) {
         put(results, r.hits.length ? h('ul', { class: 'plist' }, r.hits.map((x) => h('li', {},
           x.icon ? h('img', { src: x.icon, alt: '', width: 40, height: 40, loading: 'lazy', referrerpolicy: 'no-referrer', style: 'border-radius:8px' }) : h('div', { class: 'avatar' }, x.title.slice(0, 1)),
           h('div', { class: 'nm' }, h('b', {}, x.title), ' ', h('span', { class: 'muted' }, 'von ' + x.author), h('small', {}, x.description)),
-          h('button', { class: 'small primary', onclick: mut(async () => {
-            const j = await api('POST', P('/mods/install'), { project: x.project });
-            const fin = await watchJob(jobsBox, j.job, token);
-            if (fin.status === 'done') { toast(fin.result.files.length ? `Installiert: ${fin.result.files.join(', ')}` : 'Schon installiert.'); reload(); }
-          }) }, 'Installieren')))) : h('div', { class: 'empty' }, 'Nichts gefunden.'));
+          installBtn(x.project)))) : h('div', { class: 'empty' }, 'Nichts gefunden.'));
       } catch (e) { put(results, h('div', { class: 'notice err' }, e.message)); }
     }
     put(body, h('div', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, input), h('button', { class: 'primary', onclick: run }, 'Suchen')),
@@ -447,9 +471,11 @@ async function viewMods(token) {
     run();
   };
 
-  const tabs = h('div', { class: 'tabs' }, [['installed', `Installiert (${d.items.length})`], ['search', 'Modrinth']].map(([id, label]) =>
+  const TABS = [['installed', `Installiert (${d.items.length})`], ['perf', 'Schneller'], ['search', 'Modrinth']];
+  if (!TABS.some(([id]) => id === tab)) tab = 'installed';
+  const tabs = h('div', { class: 'tabs' }, TABS.map(([id, label]) =>
     h('button', { class: id === tab ? 'on' : '', onclick: () => { tab = id; store('blockhaus.modtab', id); paint(); } }, label)));
-  const paint = () => { tabs.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', ['installed', 'search'][i] === tab)); (tab === 'search' ? search : installed)(); };
+  const paint = () => { tabs.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', TABS[i][0] === tab)); ({ installed, perf, search })[tab](); };
   put(main, header('Mods & Plugins', `${d.software ? d.software[0].toUpperCase() + d.software.slice(1) : ''} ${d.mcVersion || ''}`.trim()),
     d.running ? h('div', { class: 'notice' }, `Änderungen an ${word}s gelten erst nach einem Neustart des Servers.`) : null, jobsBox, tabs, body);
   paint();
@@ -608,14 +634,45 @@ async function viewPacks(token) {
 
   const ap = d.applied;
   const addr = d.base.url;
+  const port = d.frontPort || 25566;
   const setup = h('details', { class: 'card', open: !ap }, h('summary', {}, h('b', {}, 'So kommt das Paket zu deinen Freunden')),
-    h('p', { class: 'muted' }, 'Minecraft lädt ein Texturpaket von einer Internet-Adresse, der Server selbst schickt nur die Adresse. Blockhaus liefert die Datei deshalb selbst aus, über denselben playit-Tunnel wie Minecraft:'),
+    h('p', { class: 'muted' }, `Minecraft lädt ein Texturpaket von einer Internet-Adresse, der Server schickt nur die Adresse. Blockhaus liefert die Datei selbst aus, auf Port ${port}. Dieser Port muss über playit erreichbar sein. Dafür gibt es zwei Wege:`),
+    h('p', { style: 'margin-bottom:4px' }, h('b', {}, 'Weg A (empfohlen): ein zweiter playit-Tunnel nur für die Pakete')),
     h('ol', {},
-      h('li', {}, 'Trage unter ', h('a', { href: '#/settings' }, 'Einstellungen'), ' die öffentliche Adresse ein (die Adresse, über die deine Freunde joinen).'),
-      h('li', {}, `Öffne das playit.gg-Dashboard, wähle den Minecraft-Tunnel und ändere dort den lokalen Port von 25565 auf ${d.frontPort || 25566}. Blockhaus nimmt dort alles an, liefert die Pakete aus und reicht Minecraft-Verbindungen unverändert an Crafty weiter (${d.upstream || 'host.docker.internal:25565'}).`),
-      h('li', {}, 'Lade unten ein oder mehrere Pakete hoch, ordne sie und drücke „Veröffentlichen“.'),
-      h('li', {}, 'Mit „Von außen testen“ prüft Blockhaus, ob der Download über die öffentliche Adresse klappt.')),
-    h('p', { class: 'muted small' }, `Direkte Verbindungen im Heimnetz oder über Tailscale auf Port 25565 laufen weiter wie bisher. Fällt Blockhaus aus, können Freunde über playit nicht mehr joinen, bis du den Tunnel-Port zurückstellst oder Blockhaus wieder läuft.`));
+      h('li', {}, `Im playit.gg-Dashboard einen weiteren Tunnel anlegen: Typ „Custom TCP“, lokale Adresse 127.0.0.1 (der playit-Agent läuft in Umbrel im Host-Netz), lokaler Port ${port}.`),
+      h('li', {}, 'playit zeigt dafür eine Adresse wie abc.at.ply.gg:12345. Trage sie unter ', h('a', { href: '#/settings' }, 'Einstellungen → Texturpakete'), ' als Download-Adresse ein, mit http:// davor.'),
+      h('li', {}, 'Unten Pakete hochladen, ordnen und „Veröffentlichen und eintragen“ drücken.'),
+      h('li', {}, 'Mit „Von außen testen“ prüft Blockhaus, ob der Download über diese Adresse klappt.')),
+    h('p', { class: 'muted small' }, 'Minecraft selbst läuft dabei unverändert über den bisherigen Tunnel. Ein kostenloses playit-Konto hat laut playit.gg 4 Ports: Minecraft, Pakete und der Voice Chat belegen zusammen 3.'),
+    h('p', { style: 'margin-bottom:4px' }, h('b', {}, 'Weg B: den Minecraft-Tunnel umlegen')),
+    h('p', { class: 'muted small' }, `Im Dashboard den lokalen Port des Minecraft-Tunnels von 25565 auf ${port} ändern und unter Einstellungen die öffentliche Adresse eintragen. Blockhaus nimmt dann alles an, liefert Pakete aus und reicht Minecraft-Verbindungen an ${d.upstream || 'host.docker.internal:25565'} weiter. Fällt Blockhaus aus, kann über playit niemand mehr joinen. Nicht geprüft ist, ob playit Web-Anfragen durch einen Minecraft-Tunnel lässt; „Von außen testen“ zeigt es dir.`));
+
+  // The address that is in server.properties right now but was not put there by "Veröffentlichen".
+  const manualUrl = d.current.url && (!ap || !ap.inSync) ? d.current : null;
+  const probeBox = h('div', {});
+  const probe = mut(async () => {
+    put(probeBox, h('p', { class: 'muted' }, 'Lade das Paket von der Adresse und prüfe es …'));
+    const r = await api('POST', P('/packs/probe'), {});
+    const fin = await watchJob(jobsBox, r.job, token);
+    const x = fin.result || {};
+    if (x.error) { put(probeBox, h('div', { class: 'notice err' }, h('span', {}, `Von dieser Adresse lässt sich nichts laden: ${x.error}`))); return; }
+    put(probeBox,
+      x.findings.map((f) => h('div', { class: 'notice ' + (f.level === 'err' ? 'err' : f.level === 'warn' ? 'warn' : 'ok') }, h('span', {}, f.text))),
+      h('p', { class: 'muted small' }, [x.size ? fmtSize(x.size) : null, x.sha1 ? 'SHA-1 ' + x.sha1 : null, x.contentType || null, x.description ? 'Beschreibung: ' + x.description : null].filter(Boolean).join(' · ')));
+  });
+  const importCurrent = mut(async () => {
+    const r = await api('POST', P('/packs/import-current'), {});
+    const fin = await watchJob(jobsBox, r.job, token);
+    if (fin.status !== 'done') return;
+    toast(`„${fin.result.pack.name}“ ist jetzt in deiner Liste${fin.result.pack.repaired ? ' (Verpackung repariert)' : ''}. Mit „Veröffentlichen“ liefert Blockhaus es aus.`);
+    reload();
+  });
+  const manual = manualUrl ? h('div', { class: 'card' }, h('h2', {}, 'Von Hand eingetragene Adresse'),
+    h('div', { class: 'addr' }, h('code', {}, manualUrl.url), h('button', { class: 'small', onclick: () => copy(manualUrl.url) }, 'Kopieren')),
+    h('p', { class: 'muted small' }, `Prüfsumme: ${manualUrl.sha1 ? manualUrl.sha1.slice(0, 12) + '…' : 'keine'} · Pack-ID: ${manualUrl.id || 'nicht gesetzt'}`),
+    h('p', { class: 'muted' }, 'Diese Adresse bekommen deine Spieler gerade. Blockhaus liefert dieses Paket nicht aus. „Prüfen“ lädt die Datei von dort und sagt dir, ob Minecraft sie annimmt und warum nicht.'),
+    h('div', { class: 'row' }, h('button', { onclick: probe }, 'Adresse prüfen'), h('button', { onclick: importCurrent }, 'In meine Pakete übernehmen')),
+    probeBox) : null;
 
   const status = h('div', { class: 'card' }, h('h2', {}, 'Aktuell eingetragen'),
     !addr ? h('div', { class: 'notice warn' }, h('span', {}, 'Es ist noch keine öffentliche Adresse eingetragen.'), h('a', { href: '#/settings' }, h('button', { class: 'small' }, 'Zu den Einstellungen'))) : null,
@@ -627,10 +684,10 @@ async function viewPacks(token) {
       h('div', { class: 'row' }, h('button', { onclick: check, disabled: !addr }, 'Von außen testen'),
         d.running && ap.inSync ? h('span', { class: 'muted small' }, 'Der Server liest die Einstellung erst nach einem Neustart.') : null))
       : h('p', { class: 'muted' }, 'Noch nichts veröffentlicht.'),
-    d.current.url && !ap ? h('p', { class: 'muted small' }, `In der server.properties steht bisher von Hand: ${d.current.url}`) : null);
+    null);
 
   put(main, header('Texturpakete', 'Pakete hochladen, ordnen und den Spielern direkt von deinem Server anbieten.'),
-    jobsBox, resultBox, setup, status, dropCard,
+    jobsBox, resultBox, manual, setup, status, dropCard,
     h('div', { class: 'card' }, h('h2', {}, `Pakete (${d.packs.length})`),
       d.packs.length ? [h('p', { class: 'muted small', style: 'margin-top:-4px' }, 'Reihenfolge wie in Minecraft: Das oberste Paket gewinnt, wenn mehrere dieselbe Textur enthalten. Sprachdateien, Sounds und Atlanten werden zusammengeführt.'),
         h('ul', { class: 'plist' }, d.packs.map(row)),
@@ -641,5 +698,49 @@ async function viewPacks(token) {
   resumeJobs(jobsBox, token, () => reload());
 }
 
-window.BHViews = { files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks };
+// ---------- Voice Chat -----------------------------------------------------------------------
+async function viewVoice(token) {
+  const d = await api('GET', P('/voicechat'));
+  if (token !== getToken()) return;
+  const mut = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+  const portIn = h('input', { type: 'number', min: -1, max: 65535, step: 1, value: d.port === null ? '' : d.port, placeholder: '24454', 'aria-label': 'Voice-Chat-Port (UDP)', disabled: !d.config });
+  const hostIn = h('input', { type: 'text', value: d.voiceHost || '', placeholder: 'z. B. abc.joinmc.link:12345', 'aria-label': 'voice_host', disabled: !d.config, autocomplete: 'off' });
+  const save = mut(async () => {
+    const r = await api('POST', P('/voicechat'), { port: portIn.value === '' ? undefined : Number(portIn.value), voice_host: hostIn.value });
+    toast(r.restartNeeded ? 'Gespeichert. Gilt nach einem Neustart des Servers.' : 'Gespeichert.');
+    window.BH.route();
+  });
+  const logPort = d.log && d.log.startedPort;
+  const live = d.running && logPort !== null && d.port !== null && String(logPort) !== String(d.port);
+  const jarText = d.jars.length ? d.jars.map((j) => `${j.folder}/${j.file}${j.enabled ? '' : ' (deaktiviert)'}`).join(', ') : null;
+  put(main, header('Voice Chat', 'Simple Voice Chat erreichbar machen, wenn deine Freunde über playit joinen.'),
+    d.running ? h('div', { class: 'notice' }, 'Änderungen am Voice Chat gelten erst nach einem Neustart des Servers.') : null,
+    h('div', { class: 'card' }, h('h2', {}, 'Stand auf deinem Server'),
+      h('div', { class: 'facts' }, [
+        ['Mod/Plugin', jarText || 'nicht gefunden (mods/ oder plugins/)'],
+        ['Konfiguration', d.config || 'noch nicht vorhanden'],
+        ['Port (UDP)', d.port === null ? '–' : (d.port === '-1' ? '-1 (wie Minecraft)' : d.port)],
+        ['voice_host', d.config ? (d.voiceHost || 'leer') : '–'],
+        ['Laut Server-Log', logPort ? `lauscht auf UDP ${logPort}` : 'noch kein Start des Voice Chats zu sehen'],
+      ].map(([k, v]) => h('div', {}, h('span', { class: 'k' }, k), String(v)))),
+      !d.jars.length ? h('div', { class: 'notice warn' }, h('span', {}, 'Es liegt kein Voice-Chat-Mod und kein Plugin im Server. Installiere „Simple Voice Chat“ unter Mods & Plugins.'), h('a', { href: '#/mods' }, h('button', { class: 'small' }, 'Zu Mods & Plugins'))) : null,
+      d.jars.length && !d.config ? h('div', { class: 'notice warn' }, 'Die Konfigurationsdatei legt der Mod beim ersten Start an. Starte den Server einmal und öffne diese Seite danach wieder.') : null,
+      live ? h('div', { class: 'notice warn' }, `Der laufende Server nutzt noch den Port ${logPort}, in der Datei steht ${d.port}. Nach einem Neustart gilt die Datei.`) : null),
+    h('div', { class: 'card' }, h('h2', {}, 'Warum „kann nicht verbinden“ kommt'),
+      h('p', { class: 'muted' }, 'Der Voice Chat läuft nicht über die normale Minecraft-Verbindung, sondern über eine eigene UDP-Verbindung zu einem eigenen Port. Dein Minecraft-Tunnel in playit leitet nur TCP weiter. Damit der Ton ankommt, braucht es drei Dinge:'),
+      h('ol', {},
+        h('li', {}, h('b', {}, 'Ein Port, den Crafty nach außen freigibt. '), `Der Voice Chat öffnet seinen Port im Crafty-Container (bei dir laut Log ${logPort || '24454'}/UDP). Das Crafty-Paket im Denny-Store (GitHub, Stand Oktober 2026) gibt nur TCP 25500–25600 und UDP 19132 frei, UDP ${logPort || 24454} also nicht. Nimm darum Port ${d.suggestedPort}: Er ist für Bedrock reserviert und frei, solange du keinen Bedrock-Server betreibst. Wie deine Installation wirklich aussieht, habe ich nicht gesehen.`),
+        h('li', {}, h('b', {}, 'Ein UDP-Tunnel in playit. '), `Neuen Tunnel anlegen, Protokoll „MC: Simple Voice Chat“ (UDP), lokale Adresse 127.0.0.1, lokaler Port derselbe wie oben (${d.suggestedPort}). playit zeigt dir dann eine öffentliche Adresse mit Port.`),
+        h('li', {}, h('b', {}, 'Diese Adresse bei voice_host. '), 'Ohne voice_host sagt der Server den Spielern „nimm die Minecraft-Adresse“, und dort gibt es keinen UDP-Port. Trage die playit-Adresse unten ein, speichere und starte den Server neu.')),
+      h('p', { class: 'muted small' }, 'Jeder Spieler braucht den Voice-Chat-Mod ebenfalls, in einer zum Server passenden Version. Im Spiel zeigt ein Symbol oben links, ob die Verbindung steht.')),
+    h('div', { class: 'card' }, h('h2', {}, 'Einstellen'),
+      h('label', { class: 'f' }, h('span', {}, 'Port (UDP)'), h('div', { class: 'row' }, h('div', { class: 'grow' }, portIn), h('button', { class: 'small', disabled: !d.config, onclick: () => { portIn.value = d.suggestedPort; } }, `${d.suggestedPort} einsetzen`)),
+        h('small', {}, `Standard des Mods ist 24454. -1 würde den Minecraft-Port (${d.mcPort}) auch für UDP nutzen; den gibt Crafty nur für TCP frei.`)),
+      h('label', { class: 'f' }, h('span', {}, 'voice_host (Adresse des playit-UDP-Tunnels)'), hostIn,
+        h('small', {}, 'Form: adresse:port, ohne http://. Leer lassen, wenn der Voice Chat nur im Heimnetz laufen soll.')),
+      h('div', { class: 'row' }, h('button', { class: 'primary', onclick: save, disabled: !d.config }, 'Speichern')),
+      d.config ? h('p', { class: 'muted small' }, `Geändert wird nur ${d.config}; die vorige Fassung bleibt als .blockhaus.bak daneben liegen.`) : null));
+}
+
+window.BHViews = { files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks, voice: viewVoice };
 })();
