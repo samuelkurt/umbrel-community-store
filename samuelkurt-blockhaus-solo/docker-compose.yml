@@ -1,0 +1,44 @@
+version: "3.7"
+
+# Blockhaus Solo: runs Minecraft itself, no Crafty Controller needed.
+services:
+  app_proxy:
+    environment:
+      # Format: <app-id>_<docker-service-name>_1
+      APP_HOST: samuelkurt-blockhaus-solo_web_1
+      APP_PORT: 3000
+
+  web:
+    # Debian-based on purpose: the Java it downloads (Temurin) is built for glibc and does not run on Alpine.
+    image: node:22-bookworm-slim
+    restart: on-failure
+    # docker stop sends SIGTERM; Blockhaus then tells Minecraft to save and stop. Give it time.
+    stop_grace_period: 2m
+    working_dir: /app
+    command: ["node", "/app/server.js"]
+    environment:
+      PORT: 3000
+      DATA_DIR: /data
+      SERVERS_DIR: /servers
+      # Shown in the panel so the "take over a server" hint names the real folder on the Umbrel.
+      SERVERS_HOST_PATH: ${APP_DATA_DIR}/servers
+      BLOCKHAUS_MODE: local
+      MC_PORT: 25665
+      PACK_PORT: 25701
+      NODE_ENV: production
+    ports:
+      # None of these may lie in 25500-25600 (the range the Crafty app publishes) or equal 25700 (Blockhaus with Crafty),
+      # otherwise `docker compose up` fails with "port is already allocated". See src/test/compose.test.js.
+      # Minecraft (TCP). The playit tunnel connects to 127.0.0.1:25665.
+      - "25665:25665"
+      # Simple Voice Chat (UDP). A second playit tunnel (UDP) connects to 127.0.0.1:24454.
+      - "24454:24454/udp"
+      # Texture-pack download (see README). Not behind the Umbrel login on purpose.
+      - "25701:25701"
+    volumes:
+      # The panel's own code (copied here from the store when the app is installed).
+      - ${APP_DATA_DIR}/src:/app:ro
+      # Settings, downloaded Java, server list.
+      - ${APP_DATA_DIR}/data:/data
+      # One subfolder per Minecraft server.
+      - ${APP_DATA_DIR}/servers:/servers

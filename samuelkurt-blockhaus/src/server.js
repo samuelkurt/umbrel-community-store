@@ -18,8 +18,10 @@ const { hashUrl } = require('./lib/download');
 const software = require('./lib/software');
 const packs = require('./lib/packs');
 const { createPackFront } = require('./lib/packserver');
+const { Local, LocalError } = require('./lib/local');
+const javaLib = require('./lib/java');
 
-const VERSION = '0.4.1';
+const VERSION = '0.5.0';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -63,9 +65,12 @@ function readJson(req, limit = 1024 * 1024) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'public'), lookup = players.mojangLookup, settleMs = 800, softwareInstall = software.install } = {}) {
+function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'public'), lookup = players.mojangLookup, settleMs = 800, softwareInstall = software.install,
+  mode = process.env.BLOCKHAUS_MODE === 'local' ? 'local' : 'crafty', mcPort = Number(process.env.MC_PORT) || 25665, localOpts = {} } = {}) {
   const config = new Config(dataDir);
-  const crafty = new Crafty(() => config.get());
+  // "local": Blockhaus runs Minecraft itself (Local has the same methods as the Crafty client). "crafty": talk to Crafty.
+  const local = mode === 'local' ? new Local({ dataDir, serversDir, port: mcPort, ...localOpts }) : null;
+  const crafty = local || new Crafty(() => config.get());
 
   // ---- helpers --------------------------------------------------------------------------
   const jobs = new Jobs();
@@ -74,7 +79,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
   async function getServer(id) {
     const list = await listServers();
     const s = list.find((x) => String(x.server_id) === String(id));
-    if (!s) throw new HttpError(404, 'Diesen Server gibt es in Crafty nicht.');
+    if (!s) throw new HttpError(404, local ? 'Diesen Server gibt es nicht.' : 'Diesen Server gibt es in Crafty nicht.');
     return s;
   }
   function dirFor(server) {
@@ -108,7 +113,8 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
     const stats = await crafty.stats(server.server_id);
     let dir = null;
     try { dir = dirFor(server); } catch { /* status works without file access */ }
-    const st = state.deriveState(stats, dir ? logTail(dir) : '');
+    // Local tracks the process itself, so its state does not depend on a log file that may still be the previous run's.
+    const st = stats.blockhausState || state.deriveState(stats, dir ? logTail(dir) : '');
     const cfg = config.get();
     const names = state.parsePlayers(stats.players);
     const inst = dir ? software.readInstalled(dir) : null;
@@ -125,7 +131,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       software: kindLabel || state.guessSoftware(server.executable, server.execution_command),
       softwareBuild: inst && inst.build ? inst.build : null,
       jar: server.executable || '',
-      memoryMb: state.parseMaxMemoryMb(server.execution_command),
+      memoryMb: server.memory_mb || state.parseMaxMemoryMb(server.execution_command),
       port: stats.server_port || server.server_port || 25565,
       cpu: Number(stats.cpu) || 0,
       memUsed: stats.mem || '',
@@ -136,7 +142,76 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       filesAvailable: !!dir,
       publicAddress: cfg.publicAddress,
       localAddress: cfg.localAddress,
+      ...(local ? { notice: stats.notice || '', eulaOk: !!stats.eula_ok, autostart: !!server.autostart, javaMajor: server.java_major || null, startedAt: stats.startedAt || 0 } : {}),
     };
+  }
+
+  function configView() {
+    const v = { ...config.publicView(), appVersion: VERSION, mode, packPort: Number(process.env.PACK_PORT) || 25700 };
+    if (local) Object.assign(v, { configured: true, mcPort: local.port, packUpstream: `127.0.0.1:${local.port}`, voicePort: 24454 });
+    return v;
+  }
+
+  // ---- standalone mode: server list, creating and taking over servers ---------------------------------
+  async function localApi(req, res, m, p) {
+    if (m === 'GET' && p === '/local/info') {
+      return send(res, 200, { port: local.port, serversDir: process.env.SERVERS_HOST_PATH || '', javaInstalled: javaLib.installed(dataDir), javaChoices: [8, 11, 17, 21, 25], candidates: await local.candidates() });
+    }
+    if (m === 'GET' && p === '/local/candidates') return send(res, 200, { candidates: await local.candidates() });
+    if (m === 'GET' && p === '/local/software') return send(res, 200, { kinds: software.KINDS });
+    if (m === 'GET' && p === '/local/software/versions') {
+      const kind = new URL(req.url, 'http://x').searchParams.get('kind');
+      const info = software.kindInfo(kind);
+      if (!info || info.unsupported) throw new HttpError(400, info ? info.info : 'Unbekannte Software.');
+      try { return send(res, 200, { versions: await software.listVersions(kind) }); }
+      catch (e) { throw new HttpError(502, 'Die Versionsliste konnte nicht geladen werden: ' + e.message); }
+    }
+    let r;
+    if (m === 'GET' && (r = /^\/local\/jobs\/([0-9a-f]+)$/.exec(p))) {
+      const j = jobs.get(r[1]);
+      if (!j) throw new HttpError(404, 'Diese Aufgabe gibt es nicht (mehr).');
+      return send(res, 200, routes.jobView(j));
+    }
+    if (m === 'POST' && p === '/local/servers') {
+      const b = await readJson(req);
+      const info = software.kindInfo(b.kind);
+      if (!info || info.unsupported) throw new HttpError(400, info ? info.info : 'Bitte wähle eine Software.');
+      if (!b.version || typeof b.version !== 'string') throw new HttpError(400, 'Bitte wähle eine Version.');
+      const created = local.create({ name: b.name, memoryMb: b.memoryMb === undefined ? 2048 : b.memoryMb });
+      let job;
+      try {
+        job = jobs.start('software', created.server_id, async (j) => {
+          j.title = `${info.label} ${b.version} installieren`;
+          try {
+            const res2 = await softwareInstall({ dir: dirFor(created), server: created, kind: b.kind, version: b.version, job: j });
+            local.keep(created.server_id);
+            return { ...res2, serverId: created.server_id };
+          } catch (e) { await local.discard(created.server_id); throw e; }
+        });
+      } catch (e) { await local.discard(created.server_id); throw e; }
+      job.title = `${info.label} ${b.version} installieren`;
+      return send(res, 202, { server: { id: created.server_id, name: created.server_name }, job: routes.jobView(job) });
+    }
+    if (m === 'POST' && p === '/local/adopt') {
+      const b = await readJson(req);
+      const s = local.adopt({ dir: b.dir, jar: b.jar, name: b.name, memoryMb: b.memoryMb === undefined ? 2048 : b.memoryMb });
+      return send(res, 200, { ok: true, server: { id: s.server_id, name: s.server_name } });
+    }
+    if (m === 'PUT' && (r = /^\/servers\/([^/]+)\/local$/.exec(p))) {
+      const patch = await readJson(req);
+      const s = local.update(decodeURIComponent(r[1]), patch);
+      return send(res, 200, { ok: true, restartNeeded: !!(await local.stats(s.server_id)).running });
+    }
+    if (m === 'POST' && (r = /^\/servers\/([^/]+)\/eula$/.exec(p))) {
+      await readJson(req);
+      local.acceptEula(decodeURIComponent(r[1]));
+      return send(res, 200, { ok: true });
+    }
+    if (m === 'DELETE' && (r = /^\/servers\/([^/]+)$/.exec(p))) {
+      const out = local.remove(decodeURIComponent(r[1]));
+      return send(res, 200, { ok: true, dir: out.dir });
+    }
+    return false;
   }
 
   // ---- API ------------------------------------------------------------------------------
@@ -145,14 +220,16 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
     const p = url.pathname.replace(/^\/api/, '');
     let r;
 
-    if (m === 'GET' && p === '/config') return send(res, 200, { ...config.publicView(), appVersion: VERSION });
+    if (m === 'GET' && p === '/config') return send(res, 200, configView());
     if (m === 'PUT' && p === '/config') {
       const body = await readJson(req);
       config.update(body);
       crafty.jwt = null;
-      return send(res, 200, config.publicView());
+      return send(res, 200, configView());
     }
+    if (local && await localApi(req, res, m, p)) return;
     if (m === 'POST' && p === '/config/test') {
+      if (local) { await readJson(req); return send(res, 200, { ok: true, servers: (await local.servers()).map((s) => ({ id: s.server_id, name: s.server_name, filesFound: true })) }); }
       const body = await readJson(req);
       // test with the submitted values merged over the stored ones, without saving
       const merged = { ...config.get() };
@@ -278,7 +355,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
-    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700 });
+    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700, mode, voiceSuggested: local ? 24454 : 19132 });
     if (handled) return;
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
@@ -332,12 +409,15 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       if (res.headersSent) return res.end();
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
       if (e instanceof CraftyError) return send(res, 502, { error: e.message, code: e.code });
+      if (e instanceof LocalError) return send(res, e.status, { error: e.message, code: e.code });
       if (e && Number.isInteger(e.status) && e.status >= 400 && e.status < 500) return send(res, e.status, { error: e.message });
       console.error('Unerwarteter Fehler:', e);
       return send(res, 500, { error: 'Interner Fehler: ' + (e && e.message ? e.message : e) });
     }
   });
   server.config = config;
+  server.local = local;
+  server.mode = mode;
   return server;
 }
 
@@ -347,12 +427,25 @@ if (require.main === module) {
     dataDir: process.env.DATA_DIR || '/data',
     serversDir: process.env.SERVERS_DIR || '/servers',
   });
-  app.listen(port, '0.0.0.0', () => console.log(`Blockhaus läuft auf Port ${port}`));
+  app.listen(port, '0.0.0.0', () => console.log(`Blockhaus läuft auf Port ${port} (${app.mode === 'local' ? 'eigenständig' : 'mit Crafty'})`));
+  if (app.local) {
+    app.local.autostart((m) => console.log(m)).catch((e) => console.error('Autostart:', e.message));
+    // docker stop sends SIGTERM: let Minecraft save and exit instead of being killed with the container
+    let closing = false;
+    const bye = async (sig) => {
+      if (closing) return; closing = true;
+      console.log(`${sig}: Minecraft wird sauber beendet …`);
+      try { await app.local.shutdown(); } catch (e) { console.error(e.message); }
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => bye('SIGTERM'));
+    process.on('SIGINT', () => bye('SIGINT'));
+  }
   // Public side: texture-pack download (+ forwarding of Minecraft traffic). See lib/packserver.js.
   const packPort = Number(process.env.PACK_PORT) || 25700;
   const front = createPackFront({
     publicDir: packs.publicDir(process.env.DATA_DIR || '/data'),
-    upstream: () => app.config.get().packUpstream,
+    upstream: () => (app.local ? `127.0.0.1:${app.local.port}` : app.config.get().packUpstream),
     log: (m) => console.warn(m),
   });
   front.on('error', (e) => console.error(`Pack-Server auf Port ${packPort} konnte nicht starten: ${e.message}`));

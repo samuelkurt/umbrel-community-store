@@ -335,7 +335,7 @@ async function handle(c) {
     const dir = c.dir();
     if (m === 'GET') {
       const { parsed } = c.readProps(dir);
-      return send(res, 200, { ...voicechat.read(dir), running: await isRunning(), mcPort: parsed.values['server-port'] || '25565', suggestedPort: 19132 }), true;
+      return send(res, 200, { ...voicechat.read(dir), running: await isRunning(), mcPort: parsed.values['server-port'] || '25565', suggestedPort: c.voiceSuggested || 19132, mode: c.mode || 'crafty' }), true;
     }
     if (m === 'POST') {
       const b = await readJson(req);

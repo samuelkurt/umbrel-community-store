@@ -1,0 +1,36 @@
+manifestVersion: 1
+id: samuelkurt-blockhaus-solo
+name: Blockhaus Solo
+tagline: Run a Minecraft Java server on your Umbrel, no other app needed
+icon: https://raw.githubusercontent.com/samuelkurt/umbrel-community-store/main/samuelkurt-blockhaus-solo/icon.svg
+category: gaming
+version: "0.5.0"
+port: 3989
+description: >-
+  The German-language, Aternos-style Blockhaus panel with its own Minecraft
+  engine: it starts and stops Java servers itself, so Crafty Controller is not
+  needed. Create a server (Vanilla, Paper, Purpur, Fabric, Quilt, NeoForge,
+  Forge), or take over a server folder you already have. Live console, logs,
+  options, players, inventories, files, worlds, backups, mods and plugins from
+  Modrinth, texture packs served from your server, and a Simple Voice Chat setup
+  page.
+
+
+  The right Java is downloaded on first start. One server runs at a time.
+  Friends join through the playit.gg tunnel app (TCP 25665, voice chat UDP 24454).
+
+
+  It is for the server owner only; there is no public web page.
+developer: samuelkurt
+website: https://github.com/samuelkurt/umbrel-community-store
+submitter: samuelkurt
+submission: https://github.com/samuelkurt/umbrel-community-store
+repo: https://github.com/samuelkurt/umbrel-community-store
+support: https://github.com/samuelkurt/umbrel-community-store/issues
+gallery: []
+releaseNotes: >-
+  0.5.0: first release. Same panel as Blockhaus, but it runs Minecraft itself (no Crafty Controller): create or take over servers, automatic Java download, start/stop with clean shutdown, optional autostart.
+dependencies: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""

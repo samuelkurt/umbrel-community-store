@@ -712,6 +712,7 @@ async function viewVoice(token) {
   });
   const logPort = d.log && d.log.startedPort;
   const live = d.running && logPort !== null && d.port !== null && String(logPort) !== String(d.port);
+  const solo = d.mode === 'local';
   const jarText = d.jars.length ? d.jars.map((j) => `${j.folder}/${j.file}${j.enabled ? '' : ' (deaktiviert)'}`).join(', ') : null;
   put(main, header('Voice Chat', 'Simple Voice Chat erreichbar machen, wenn deine Freunde über playit joinen.'),
     d.running ? h('div', { class: 'notice' }, 'Änderungen am Voice Chat gelten erst nach einem Neustart des Servers.') : null,
@@ -725,22 +726,175 @@ async function viewVoice(token) {
       ].map(([k, v]) => h('div', {}, h('span', { class: 'k' }, k), String(v)))),
       !d.jars.length ? h('div', { class: 'notice warn' }, h('span', {}, 'Es liegt kein Voice-Chat-Mod und kein Plugin im Server. Installiere „Simple Voice Chat“ unter Mods & Plugins.'), h('a', { href: '#/mods' }, h('button', { class: 'small' }, 'Zu Mods & Plugins'))) : null,
       d.jars.length && !d.config ? h('div', { class: 'notice warn' }, 'Die Konfigurationsdatei legt der Mod beim ersten Start an. Starte den Server einmal und öffne diese Seite danach wieder.') : null,
-      live ? h('div', { class: 'notice warn' }, `Der laufende Server nutzt noch den Port ${logPort}, in der Datei steht ${d.port}. Nach einem Neustart gilt die Datei.`) : null),
+      live ? h('div', { class: 'notice warn' }, `Der laufende Server nutzt noch den Port ${logPort}, in der Datei steht ${d.port}. Nach einem Neustart gilt die Datei.`) : null,
+      solo && d.port !== null && d.port !== '' && String(d.port) !== String(d.suggestedPort) ? h('div', { class: 'notice warn' }, `Blockhaus öffnet nur UDP ${d.suggestedPort} nach außen. In der Datei steht ${d.port}, dort kommt kein Voice-Chat-Verkehr an. Setze unten den Port auf ${d.suggestedPort}.`) : null),
     h('div', { class: 'card' }, h('h2', {}, 'Warum „kann nicht verbinden“ kommt'),
       h('p', { class: 'muted' }, 'Der Voice Chat läuft nicht über die normale Minecraft-Verbindung, sondern über eine eigene UDP-Verbindung zu einem eigenen Port. Dein Minecraft-Tunnel in playit leitet nur TCP weiter. Damit der Ton ankommt, braucht es drei Dinge:'),
       h('ol', {},
-        h('li', {}, h('b', {}, 'Ein Port, den Crafty nach außen freigibt. '), `Der Voice Chat öffnet seinen Port im Crafty-Container (bei dir laut Log ${logPort || '24454'}/UDP). Das Crafty-Paket im Denny-Store (GitHub, Stand Oktober 2026) gibt nur TCP 25500–25600 und UDP 19132 frei, UDP ${logPort || 24454} also nicht. Nimm darum Port ${d.suggestedPort}: Er ist für Bedrock reserviert und frei, solange du keinen Bedrock-Server betreibst. Wie deine Installation wirklich aussieht, habe ich nicht gesehen.`),
+        solo ? h('li', {}, h('b', {}, 'Ein Port, den die App nach außen freigibt. '), `Der Voice Chat nutzt UDP ${d.suggestedPort}. Genau diesen Port öffnet die Blockhaus-App auf dem Umbrel von sich aus; steht in der Konfiguration ein anderer, kommt dort nichts an.`)
+          : h('li', {}, h('b', {}, 'Ein Port, den Crafty nach außen freigibt. '), `Der Voice Chat öffnet seinen Port im Crafty-Container (bei dir laut Log ${logPort || '24454'}/UDP). Das Crafty-Paket im Denny-Store (GitHub, Stand Oktober 2026) gibt nur TCP 25500–25600 und UDP 19132 frei, UDP ${logPort || 24454} also nicht. Nimm darum Port ${d.suggestedPort}: Er ist für Bedrock reserviert und frei, solange du keinen Bedrock-Server betreibst. Wie deine Installation wirklich aussieht, habe ich nicht gesehen.`),
         h('li', {}, h('b', {}, 'Ein UDP-Tunnel in playit. '), `Neuen Tunnel anlegen, Protokoll „MC: Simple Voice Chat“ (UDP), lokale Adresse 127.0.0.1, lokaler Port derselbe wie oben (${d.suggestedPort}). playit zeigt dir dann eine öffentliche Adresse mit Port.`),
         h('li', {}, h('b', {}, 'Diese Adresse bei voice_host. '), 'Ohne voice_host sagt der Server den Spielern „nimm die Minecraft-Adresse“, und dort gibt es keinen UDP-Port. Trage die playit-Adresse unten ein, speichere und starte den Server neu.')),
       h('p', { class: 'muted small' }, 'Jeder Spieler braucht den Voice-Chat-Mod ebenfalls, in einer zum Server passenden Version. Im Spiel zeigt ein Symbol oben links, ob die Verbindung steht.')),
     h('div', { class: 'card' }, h('h2', {}, 'Einstellen'),
       h('label', { class: 'f' }, h('span', {}, 'Port (UDP)'), h('div', { class: 'row' }, h('div', { class: 'grow' }, portIn), h('button', { class: 'small', disabled: !d.config, onclick: () => { portIn.value = d.suggestedPort; } }, `${d.suggestedPort} einsetzen`)),
-        h('small', {}, `Standard des Mods ist 24454. -1 würde den Minecraft-Port (${d.mcPort}) auch für UDP nutzen; den gibt Crafty nur für TCP frei.`)),
+        h('small', {}, solo ? `Standard des Mods ist 24454 und passt zur Freigabe der App. -1 würde den Minecraft-Port (${d.mcPort}) auch für UDP nutzen; die App öffnet ihn nur für TCP.` : `Standard des Mods ist 24454. -1 würde den Minecraft-Port (${d.mcPort}) auch für UDP nutzen; den gibt Crafty nur für TCP frei.`)),
       h('label', { class: 'f' }, h('span', {}, 'voice_host (Adresse des playit-UDP-Tunnels)'), hostIn,
         h('small', {}, 'Form: adresse:port, ohne http://. Leer lassen, wenn der Voice Chat nur im Heimnetz laufen soll.')),
       h('div', { class: 'row' }, h('button', { class: 'primary', onclick: save, disabled: !d.config }, 'Speichern')),
       d.config ? h('p', { class: 'muted small' }, `Geändert wird nur ${d.config}; die vorige Fassung bleibt als .blockhaus.bak daneben liegen.`) : null));
 }
 
-window.BHViews = { files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks, voice: viewVoice };
+
+// ---------- Meine Server (standalone mode) ------------------------------------------------------
+const STATE_TXT = { offline: 'Offline', starting: 'Startet …', online: 'Online', stopping: 'Stoppt …', crashed: 'Abgestürzt', updating: 'Wird aktualisiert …' };
+const GB_CHOICES = [1, 1.5, 2, 3, 4, 6, 8, 12, 16];
+const MODDED_KINDS = new Set(['fabric', 'quilt', 'forge', 'neoforge']);
+const memLabel = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(mb % 1024 ? 1 : 0).replace('.', ',')} GB` : `${mb} MB`);
+
+function memSelect(mb, label) {
+  const opts = GB_CHOICES.map((g) => g * 1024);
+  if (!opts.includes(mb)) opts.push(mb);
+  opts.sort((a, b) => a - b);
+  return h('select', { 'aria-label': label }, opts.map((o) => h('option', { value: o, selected: o === mb }, memLabel(o))));
+}
+
+async function watchLocalJob(holder, job, token) {
+  const box = h('div', { class: 'card job' });
+  holder.append(box);
+  for (;;) {
+    let j = job;
+    try { j = await api('GET', '/local/jobs/' + job.id); } catch (e) { j = { ...job, status: 'error', error: e.message }; }
+    if (token !== getToken()) { box.remove(); return j; }
+    put(box,
+      h('div', { class: 'row', style: 'justify-content:space-between' }, h('b', {}, j.title || 'Aufgabe'),
+        h('span', { class: 'chip' + (j.status === 'done' ? ' on' : '') }, j.status === 'running' ? 'läuft' : j.status === 'done' ? 'fertig' : 'Fehler')),
+      j.status === 'running' ? progressBar(j.progress) : null,
+      j.message && j.status === 'running' ? h('div', { class: 'muted small' }, j.message) : null,
+      j.status === 'error' ? h('div', { class: 'notice err', style: 'margin:8px 0 0' }, j.error) : null);
+    if (j.status !== 'running') return j;
+    await sleep(700);
+  }
+}
+
+async function viewServers(token) {
+  const [info, sw, list] = await Promise.all([api('GET', '/local/info'), api('GET', '/local/software'), api('GET', '/servers')]);
+  const stats = await Promise.all(list.map((s) => api('GET', `/servers/${encodeURIComponent(s.id)}/status`).catch(() => null)));
+  if (token !== getToken()) return;
+  S.servers = list;
+  const reload = () => window.BH.route();
+  const jobsBox = h('div', {});
+  const open = (id) => { S.sid = id; store('blockhaus.sid', String(id)); location.hash = '#/server'; };
+
+  // ---- existing servers
+  const cards = list.map((s, i) => {
+    const st = stats[i];
+    const form = h('div', { style: 'display:none;margin-top:12px' });
+    const nameIn = h('input', { type: 'text', value: s.name, maxlength: 60, 'aria-label': 'Name' });
+    const memIn = memSelect(st ? st.memoryMb : 2048, 'Arbeitsspeicher');
+    const autoIn = h('input', { type: 'checkbox', style: 'width:auto', checked: !!(st && st.autostart) });
+    const javaIn = h('select', { 'aria-label': 'Java-Version' }, h('option', { value: '' }, 'automatisch (passend zur Version)'),
+      info.javaChoices.map((j) => h('option', { value: j, selected: st && st.javaMajor === j }, `Java ${j}`)));
+    put(form,
+      h('label', { class: 'f' }, h('span', {}, 'Name'), nameIn),
+      h('label', { class: 'f' }, h('span', {}, 'Arbeitsspeicher (Obergrenze)'), memIn, h('small', {}, 'Mehr als die Hälfte des Arbeitsspeichers deines Umbrel solltest du nicht vergeben. Mod-Server brauchen meist 4 GB oder mehr.')),
+      h('label', { class: 'f' }, h('span', {}, 'Java'), javaIn, h('small', {}, 'Blockhaus lädt das passende Java beim ersten Start selbst herunter.')),
+      h('label', { class: 'row', style: 'gap:8px;margin:8px 0' }, autoIn, 'Beim Start der App automatisch starten'),
+      h('div', { class: 'row' }, h('button', { class: 'primary', onclick: async () => {
+        try {
+          const r = await api('PUT', `/servers/${encodeURIComponent(s.id)}/local`, { name: nameIn.value, memoryMb: Number(memIn.value), autostart: autoIn.checked, javaMajor: javaIn.value === '' ? null : Number(javaIn.value) });
+          toast(r.restartNeeded ? 'Gespeichert. Gilt nach einem Neustart des Servers.' : 'Gespeichert.'); reload();
+        } catch (e) { toast(e.message, true); }
+      } }, 'Speichern'), h('button', { onclick: () => { form.style.display = 'none'; } }, 'Abbrechen')));
+    return h('div', { class: 'card' },
+      h('div', { class: 'row', style: 'justify-content:space-between' },
+        h('div', {}, h('b', {}, s.name), h('div', { class: 'muted small' }, st ? [st.software, st.version, st.memoryMb ? memLabel(st.memoryMb) : null].filter(Boolean).join(' · ') : '')),
+        h('span', { class: 'chip' + (st && st.state === 'online' ? ' on' : '') }, st ? (STATE_TXT[st.state] || st.state) : '?')),
+      h('div', { class: 'row', style: 'margin-top:10px' },
+        h('button', { class: 'primary', onclick: () => open(s.id) }, String(S.sid) === String(s.id) ? 'Öffnen (aktiv)' : 'Öffnen'),
+        h('button', { onclick: () => { form.style.display = form.style.display === 'none' ? '' : 'none'; } }, 'Einstellungen'),
+        h('button', { onclick: async () => {
+          if (!confirm(`„${s.name}“ aus Blockhaus entfernen?\n\nDie Dateien (Welt, Mods, Einstellungen) bleiben im Ordner liegen. Du kannst den Server später wieder übernehmen.`)) return;
+          try { await api('DELETE', `/servers/${encodeURIComponent(s.id)}`); toast('Entfernt. Die Dateien sind noch da.'); reload(); } catch (e) { toast(e.message, true); }
+        } }, 'Entfernen')),
+      form);
+  });
+
+  // ---- new server
+  const kinds = sw.kinds.filter((k) => !k.unsupported);
+  let kind = 'vanilla'; let versions = []; let showUnstable = false; let version = '';
+  const nameIn = h('input', { type: 'text', placeholder: 'z. B. Survival mit Freunden', maxlength: 60, 'aria-label': 'Name des neuen Servers' });
+  const memIn = memSelect(2048, 'Arbeitsspeicher');
+  const kindsBox = h('div', { class: 'kinds' });
+  const verBox = h('div', {});
+  const createBtn = h('button', { class: 'primary big', disabled: true }, 'Server anlegen');
+  const paintKinds = () => put(kindsBox, kinds.map((k) => h('button', { class: 'kind' + (k.id === kind ? ' on' : ''), onclick: () => { kind = k.id; version = ''; paintKinds(); loadVersions(); } }, h('b', {}, k.label), h('small', {}, k.info))));
+  async function loadVersions() {
+    put(verBox, h('p', { class: 'muted' }, 'Lade Versionen …'));
+    try { versions = (await api('GET', '/local/software/versions?' + q({ kind }))).versions; } catch (e) { put(verBox, h('div', { class: 'notice err' }, e.message)); return; }
+    paintVersions();
+  }
+  function paintVersions() {
+    const shown = versions.filter((v) => showUnstable || v.stable || kind === 'snapshot');
+    if (!version || !shown.some((v) => v.id === version)) version = shown.length ? shown[0].id : '';
+    put(verBox, h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('select', { 'aria-label': 'Version', onchange: (e) => { version = e.target.value; createBtn.disabled = !version; } },
+        shown.map((v) => h('option', { value: v.id, selected: v.id === version }, v.id + (v.build && kind !== 'fabric' ? `  (${v.build})` : '') + (!v.stable && kind !== 'snapshot' ? ' · Vorabversion' : '')))),
+      ),
+      kind === 'snapshot' ? null : h('label', { class: 'row', style: 'gap:6px' }, h('input', { type: 'checkbox', style: 'width:auto', checked: showUnstable, onchange: (e) => { showUnstable = e.target.checked; paintVersions(); } }, ), 'Vorabversionen')),
+      MODDED_KINDS.has(kind) ? h('p', { class: 'muted small' }, 'Der Mod-Loader wird beim ersten Start einmalig installiert. Das braucht Internet und einige Minuten. Plane mindestens 4 GB Arbeitsspeicher ein.') : null);
+    createBtn.disabled = !version;
+  }
+  createBtn.onclick = async () => {
+    if (!nameIn.value.trim()) { toast('Bitte gib dem Server einen Namen.', true); nameIn.focus(); return; }
+    createBtn.disabled = true;
+    try {
+      const r = await api('POST', '/local/servers', { name: nameIn.value, kind, version, memoryMb: Number(memIn.value) });
+      const fin = await watchLocalJob(jobsBox, r.job, token);
+      if (fin.status === 'done') { toast('Server angelegt. Als Nächstes die EULA akzeptieren und starten.'); open(r.server.id); } else createBtn.disabled = false;
+    } catch (e) { toast(e.message, true); createBtn.disabled = false; }
+  };
+
+  // ---- adopt
+  const cand = info.candidates.map((c) => {
+    const jarSel = c.jars.length > 1 || !c.suggestedJar ? h('select', { 'aria-label': 'Start-Datei' }, !c.suggestedJar ? h('option', { value: '' }, '– Start-Datei wählen –') : null, c.jars.map((j) => h('option', { value: j, selected: j === c.suggestedJar }, j))) : null;
+    const nm = h('input', { type: 'text', value: c.dir, maxlength: 60, 'aria-label': 'Name' });
+    const mem = memSelect(4096, 'Arbeitsspeicher');
+    return h('div', { class: 'card' },
+      h('div', { class: 'row', style: 'justify-content:space-between' }, h('b', {}, c.dir),
+        h('span', { class: 'muted small' }, [c.software ? `${c.software} ${c.version || ''}`.trim() : null, c.hasProperties ? 'server.properties vorhanden' : null, c.empty ? 'leer' : null].filter(Boolean).join(' · '))),
+      h('div', { class: 'row', style: 'margin-top:8px' }, h('div', { class: 'grow' }, nm), mem, jarSel),
+      c.jars.length ? null : h('p', { class: 'notice warn' }, 'In diesem Ordner liegt keine jar-Datei. Lege besser einen neuen Server an und kopiere die Welt hinein.'),
+      h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'primary', disabled: !c.jars.length, onclick: async () => {
+        try {
+          const r = await api('POST', '/local/adopt', { dir: c.dir, name: nm.value, jar: jarSel ? jarSel.value || undefined : undefined, memoryMb: Number(mem.value) });
+          toast('Übernommen.'); open(r.server.id);
+        } catch (e) { toast(e.message, true); }
+      } }, 'Übernehmen')));
+  });
+  const where = info.serversDir || '<Umbrel>/app-data/samuelkurt-blockhaus-solo/servers';
+
+  put(main,
+    h('div', { class: 'head' }, h('h1', {}, 'Meine Server'), h('div', { class: 'row' }, h('button', { onclick: reload }, 'Aktualisieren'))),
+    h('p', { class: 'sub' }, 'Es läuft immer nur ein Server gleichzeitig. Minecraft wird von Blockhaus selbst gestartet.'),
+    !list.length ? h('div', { class: 'notice' }, 'Willkommen im Blockhaus. Lege unten deinen ersten Server an, oder übernimm einen vorhandenen Server-Ordner.') : null,
+    jobsBox,
+    cards,
+    h('div', { class: 'card' }, h('h2', {}, 'Neuen Server anlegen'),
+      h('label', { class: 'f' }, h('span', {}, 'Name'), nameIn),
+      h('label', { class: 'f' }, h('span', {}, 'Arbeitsspeicher (Obergrenze)'), memIn),
+      h('div', { class: 'f' }, h('span', {}, 'Software'), kindsBox),
+      h('div', { class: 'f' }, h('span', {}, 'Version'), verBox),
+      h('p', { class: 'muted small' }, `Java wird beim ersten Start automatisch geladen (einige zehn bis hundert MB).${info.javaInstalled.length ? ' Schon vorhanden: Java ' + info.javaInstalled.join(', ') + '.' : ''}`),
+      createBtn),
+    h('div', { class: 'card' }, h('h2', {}, 'Vorhandenen Server übernehmen'),
+      h('p', { class: 'muted' }, 'Zum Beispiel einen Server aus Crafty Controller. Stoppe ihn dort zuerst, kopiere seinen Ordner in den Servers-Ordner dieser App und klicke danach „Aktualisieren“.'),
+      h('pre', { class: 'code' }, `sudo cp -a <Crafty-Servers-Ordner>/<Server-ID> ${where}/mein-server`),
+      h('p', { class: 'muted small' }, 'Der Ordner muss für diese App lesbar und beschreibbar sein; Blockhaus läuft als root und legt Dateien darin an.')),
+    cand);
+  paintKinds();
+  loadVersions();
+}
+
+window.BHViews = { servers: viewServers, files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks, voice: viewVoice };
 })();

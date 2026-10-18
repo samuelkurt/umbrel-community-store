@@ -3,7 +3,12 @@
 German-language, Aternos-style panel for a Minecraft server managed by Crafty Controller 4.
 Owner only, no public page. Friends connect with the normal Minecraft address.
 
-## What is in this version (0.4.1)
+> **0.5.0:** the same panel also exists as **Blockhaus Solo** (`../samuelkurt-blockhaus-solo`), which starts Minecraft
+> itself and needs no Crafty. Install either this app (with Crafty) or Solo; both can be installed next to each other
+> (their ports differ), but should not run the *same* server folder at the same time. The code is shared:
+> `node scripts/sync-solo.js` copies `src/` to the Solo folder (a test fails when the copies differ).
+
+## What is in this version (0.5.0)
 
 | Page | What it does |
 |---|---|
@@ -148,6 +153,9 @@ cd src && node --test test/*.test.js
 
 The offline tests run against a mock of the Crafty API (`src/test/mock-crafty.js`) and a temporary
 server folder, with real fixtures from a 1.21.4 server in `src/test/fixtures`. They do not talk to a real Crafty.
+
+Standalone-mode tests (`local.test.js`, `local-api.test.js`, `solo-base.test.js`) use a fake `java` (`src/test/fake-mc.js`).
+`NET=1` also runs the real Adoptium download.
 
 ```bash
 NET=1 node --test test/net.test.js   # real Mojang / Paper / Purpur / Fabric / Quilt / Forge / NeoForge / Modrinth

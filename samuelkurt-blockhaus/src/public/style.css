@@ -213,3 +213,4 @@ input[type=checkbox] { width: auto; flex: none; }
 @media (max-width: 760px) { .plist li:has(.acts) { flex-wrap: wrap; } .plist li .acts { width: 100%; justify-content: flex-start; } }
 .addr code { word-break: break-all; }
 .notice { overflow-wrap: anywhere; }
+pre.code { background: var(--panel2); border: 1px solid var(--line); padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 8px 0; white-space: pre-wrap; word-break: break-all; }
