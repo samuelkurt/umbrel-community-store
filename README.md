@@ -1,11 +1,14 @@
 # samuelkurt Umbrel community app store
 
-Two apps:
+Three apps:
 
 - **playit.gg Tunnel** (`samuelkurt-playit`): runs the official playit.gg agent so friends can
   join your Minecraft server without Tailscale or port forwarding (works behind CGNAT).
 - **Blockhaus** (`samuelkurt-blockhaus`): Aternos-style control panel for your Crafty Controller
   server (start/stop, console, log, options, players). See `samuelkurt-blockhaus/README.md`.
+- **Blockhaus Solo** (`samuelkurt-blockhaus-solo`): the same panel, but it runs Minecraft itself, so Crafty
+  Controller is not needed. See `samuelkurt-blockhaus-solo/README.md`. Its `src/` is a copy: after changing
+  `samuelkurt-blockhaus/src` run `node scripts/sync-solo.js`.
 
 The rest of this file is about the playit.gg app.
 

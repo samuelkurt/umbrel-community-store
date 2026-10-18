@@ -72,6 +72,7 @@ const ICONS = {
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
   puzzle: '<path d="M10 4a2 2 0 1 1 4 0v2h4v4h-2a2 2 0 1 0 0 4h2v4h-4v-2a2 2 0 1 0-4 0v2H6v-4h2a2 2 0 1 0 0-4H6V6h4z"/>',
+  home: '<path d="M4 11 12 4l8 7v9H4z"/><path d="M10 20v-6h4v6"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
 };
 function icon(name) {
@@ -91,6 +92,7 @@ function clearTimers() { timers.forEach(clearInterval); timers = []; }
 
 const ROUTES = [
   { id: 'server', label: 'Server', icon: 'server', view: viewServer },
+  { id: 'servers', label: 'Meine Server', icon: 'home', only: 'local', view: (t) => window.BHViews.servers(t) },
   { id: 'options', label: 'Optionen', icon: 'sliders', view: viewOptions },
   { id: 'players', label: 'Spieler', icon: 'users', view: viewPlayers },
   { id: 'console', label: 'Konsole', icon: 'terminal', view: viewConsole },
@@ -109,7 +111,7 @@ const ROUTES = [
 ];
 
 function renderNav(active) {
-  nav.replaceChildren(...ROUTES.map((r) => (r.id === 'sep'
+  nav.replaceChildren(...ROUTES.filter((r) => !r.only || (S.cfg && S.cfg.mode === r.only)).map((r) => (r.id === 'sep'
     ? h('div', { class: 'sep' })
     : h('a', { href: '#/' + r.id, class: r.id === active ? 'on' : '' }, icon(r.icon), r.label))));
 }
@@ -120,11 +122,14 @@ async function route() {
   let id = (location.hash.match(/^#\/(\w+)/) || [])[1] || 'server';
   if (!ROUTES.some((r) => r.id === id && r.view)) id = 'server';
   renderNav(id);
-  const def = ROUTES.find((r) => r.id === id);
   try {
     S.cfg = await api('GET', '/config');
+    if (token !== routeToken) return;
+    if (id === 'servers' && S.cfg.mode !== 'local') id = 'server';
+    renderNav(id);
+    const def = ROUTES.find((r) => r.id === id);
     if (!S.cfg.configured && id !== 'settings') { location.hash = '#/settings'; return; }
-    if (id !== 'settings') await loadServers();
+    if (id !== 'settings' && id !== 'servers') { if ((await loadServers()) === false) return; }
     if (token !== routeToken) return;
     await def.view(token);
   } catch (e) {
@@ -143,7 +148,10 @@ function errorBox(e) {
 
 async function loadServers() {
   S.servers = await api('GET', '/servers');
-  if (!S.servers.length) throw new Error('In Crafty gibt es noch keinen Server.');
+  if (!S.servers.length) {
+    if (S.cfg && S.cfg.mode === 'local') { location.hash = '#/servers'; return false; }
+    throw new Error('In Crafty gibt es noch keinen Server.');
+  }
   if (!S.servers.some((s) => String(s.id) === String(S.sid))) S.sid = S.servers[0].id;
   store('blockhaus.sid', String(S.sid));
 }
@@ -176,7 +184,7 @@ async function viewServer(token) {
         !confirm(`Es ${st.online === 1 ? 'ist 1 Spieler' : 'sind ' + st.online + ' Spieler'} online. Trotzdem ${action === 'stop' ? 'stoppen' : 'neu starten'}?`)) return;
     if (action === 'kill' && !confirm('Den Serverprozess hart beenden? Nicht gespeicherte Welt-Daten können verloren gehen.')) return;
     busy = true; paint(st);
-    try { await api('POST', P('/action/' + action)); toast('Befehl an Crafty gesendet.'); }
+    try { await api('POST', P('/action/' + action)); toast(S.cfg.mode === 'local' ? 'Befehl gesendet.' : 'Befehl an Crafty gesendet.'); }
     catch (e) { toast(e.message, true); }
     busy = false;
     setTimeout(refresh, 1200);
@@ -204,6 +212,15 @@ async function viewServer(token) {
     } }, 'Kopieren');
   }
 
+  function eulaCard() {
+    return h('div', { class: 'card' }, h('h2', {}, 'Minecraft-EULA'),
+      h('p', {}, 'Vor dem ersten Start musst du die Nutzungsbedingungen von Mojang akzeptieren: ',
+        h('a', { href: 'https://aka.ms/MinecraftEULA', target: '_blank', rel: 'noopener noreferrer' }, 'aka.ms/MinecraftEULA'), '. Blockhaus trägt dann eula=true in die Datei eula.txt deines Servers ein.'),
+      h('button', { class: 'primary', onclick: async () => {
+        try { await api('POST', P('/eula')); toast('EULA akzeptiert.'); refresh(); } catch (e) { toast(e.message, true); }
+      } }, 'Ich habe die EULA gelesen und akzeptiere sie'));
+  }
+
   function kv(k, v, s) {
     return h('div', { class: 'card kv' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v), s ? h('div', { class: 's' }, s) : null);
   }
@@ -212,7 +229,7 @@ async function viewServer(token) {
     const label = STATE_LABEL[st.state] || st.state;
     const btns = [];
     if (st.state === 'offline' || st.state === 'crashed') {
-      btns.push(h('button', { class: 'big', disabled: busy, onclick: () => act('start', st) }, '▶ Starten'));
+      btns.push(h('button', { class: 'big', disabled: busy || st.eulaOk === false, onclick: () => act('start', st) }, '▶ Starten'));
     } else if (st.state === 'online') {
       btns.push(h('button', { class: 'big', disabled: busy, onclick: () => act('stop', st) }, '■ Stoppen'));
       btns.push(h('button', { disabled: busy, onclick: () => act('restart', st) }, '↻ Neustarten'));
@@ -228,6 +245,8 @@ async function viewServer(token) {
           h('div', { class: 'st' }, label),
           h('div', { class: 'pl' }, st.state === 'online' ? `${st.online} / ${st.max || '?'} Spieler online` : (st.version ? `Version ${st.version}` : ''))),
         h('div', { class: 'btns' }, btns)),
+      st.eulaOk === false ? eulaCard() : null,
+      st.notice && st.eulaOk !== false ? h('div', { class: 'notice' + (st.state === 'crashed' ? ' err' : '') }, st.notice) : null,
       addrCard(st),
       h('div', { class: 'grid' },
         kv('Software', st.software, st.softwareBuild ? `Build ${st.softwareBuild}` : (st.jar || null)),
@@ -601,6 +620,7 @@ async function viewLog(token) {
 // ---------- Settings -------------------------------------------------------------------
 async function viewSettings() {
   const c = S.cfg;
+  const solo = c.mode === 'local';
   const f = {
     craftyUrl: h('input', { type: 'text', value: c.craftyUrl, 'aria-label': 'Crafty-URL' }),
     apiToken: h('input', { type: 'password', placeholder: c.hasToken ? '•••••• gespeichert (leer lassen zum Behalten)' : 'API-Token einfügen', autocomplete: 'off', 'aria-label': 'API-Token' }),
@@ -613,9 +633,10 @@ async function viewSettings() {
   };
   const result = h('div', {});
   const field = (label, el, hint) => h('label', { class: 'f' }, h('span', {}, label), el, hint ? h('small', {}, hint) : null);
+  const SOLO_FIELDS = ['publicAddress', 'localAddress', 'packBaseUrl'];
   const body = () => {
     const b = {};
-    for (const [k, el] of Object.entries(f)) b[k] = el.value;
+    for (const [k, el] of Object.entries(f)) if (!solo || SOLO_FIELDS.includes(k)) b[k] = el.value;
     return b;
   };
   async function test() {
@@ -642,7 +663,10 @@ async function viewSettings() {
     h('div', { class: 'head' }, h('h1', {}, 'Einstellungen')),
     h('p', { class: 'sub' }, 'Blockhaus Version ' + (c.appVersion || '?')),
     !c.configured ? h('div', { class: 'notice warn' }, 'Willkommen im Blockhaus. Verbinde zuerst Crafty Controller: Token erzeugen unter Crafty → Dein Benutzer → API-Schlüssel, oder Benutzer und Passwort eintragen.') : null,
-    h('div', { class: 'card' }, h('h2', {}, 'Crafty Controller'),
+    solo ? h('div', { class: 'card' }, h('h2', {}, 'Eigenständiger Betrieb'),
+      h('p', {}, `Blockhaus startet Minecraft selbst, Crafty Controller wird nicht gebraucht. Minecraft lauscht auf Port ${c.mcPort}, der Voice Chat auf UDP ${c.voicePort}, Texturpakete werden auf Port ${c.packPort} ausgeliefert.`),
+      h('p', { class: 'muted small' }, 'Server legst du unter „Meine Server“ an oder übernimmst vorhandene Ordner.')) : null,
+    solo ? null : h('div', { class: 'card' }, h('h2', {}, 'Crafty Controller'),
       field('Crafty-URL', f.craftyUrl, 'Standard im Umbrel-Netz: https://crafty_container:8443'),
       field('API-Token (empfohlen)', f.apiToken, 'Der Token braucht Zugriff auf deinen Server und die Rechte „Befehle“, „Start/Stopp“ und „Logs“.'),
       h('details', {}, h('summary', {}, 'Statt Token: Benutzer und Passwort'),
@@ -650,11 +674,11 @@ async function viewSettings() {
       c.hasToken ? h('p', {}, h('button', { class: 'small', onclick: async () => { await api('PUT', '/config', { clearToken: true }); toast('Token gelöscht.'); route(); } }, 'Gespeicherten Token löschen')) : null),
     h('div', { class: 'card' }, h('h2', {}, 'Adressen'),
       field('Öffentliche Adresse für Freunde', f.publicAddress, 'Wird auf der Server-Seite zum Kopieren angezeigt (z. B. von playit.gg).'),
-      field('Adresse im Heimnetz', f.localAddress)),
+      field('Adresse im Heimnetz', f.localAddress, solo ? `Leer = diese Adresse im Browser plus Port ${c.mcPort}.` : null)),
     h('div', { class: 'card' }, h('h2', {}, 'Texturpakete'),
-      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, 'Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port 25700, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port 25700 zeigen.'),
-      field('Minecraft-Server für die Weiterleitung', f.packUpstream, 'Blockhaus leitet Minecraft-Verbindungen, die über den Pack-Port kommen, an diese Adresse weiter (Standard: Crafty auf Port 25565).')),
-    h('div', { class: 'row' }, h('button', { onclick: test }, 'Verbindung testen'), h('button', { class: 'primary', onclick: save }, 'Speichern')),
+      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, `Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port ${c.packPort || 25700}, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port ${c.packPort || 25700} zeigen.`),
+      solo ? null : field('Minecraft-Server für die Weiterleitung', f.packUpstream, 'Blockhaus leitet Minecraft-Verbindungen, die über den Pack-Port kommen, an diese Adresse weiter (Standard: Crafty auf Port 25565).')),
+    h('div', { class: 'row' }, solo ? null : h('button', { onclick: test }, 'Verbindung testen'), h('button', { class: 'primary', onclick: save }, 'Speichern')),
     h('div', { style: 'margin-top:14px' }, result));
 }
 
