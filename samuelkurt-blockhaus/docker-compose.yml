@@ -17,12 +17,14 @@ services:
       DATA_DIR: /data
       SERVERS_DIR: /servers
       # Public texture-pack download + Minecraft forwarding (see README, "Texture packs").
-      PACK_PORT: 25566
+      PACK_PORT: 25700
       NODE_ENV: production
     ports:
+      # Port 25700, NOT 25566: the Crafty app publishes the whole range 25500-25600 on the host, so a port in it makes
+      # `docker compose up` fail with "port is already allocated". Keep this outside that range.
       # Not behind the Umbrel login on purpose: this is what the playit.gg tunnel connects to.
       # It only serves published pack files and forwards Minecraft traffic to Crafty.
-      - "25566:25566"
+      - "25700:25700"
     volumes:
       # The panel's own code (copied here from the store when the app is installed).
       - ${APP_DATA_DIR}/src:/app:ro

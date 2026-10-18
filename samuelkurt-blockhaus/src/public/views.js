@@ -634,7 +634,7 @@ async function viewPacks(token) {
 
   const ap = d.applied;
   const addr = d.base.url;
-  const port = d.frontPort || 25566;
+  const port = d.frontPort || 25700;
   const setup = h('details', { class: 'card', open: !ap }, h('summary', {}, h('b', {}, 'So kommt das Paket zu deinen Freunden')),
     h('p', { class: 'muted' }, `Minecraft lädt ein Texturpaket von einer Internet-Adresse, der Server schickt nur die Adresse. Blockhaus liefert die Datei selbst aus, auf Port ${port}. Dieser Port muss über playit erreichbar sein. Dafür gibt es zwei Wege:`),
     h('p', { style: 'margin-bottom:4px' }, h('b', {}, 'Weg A (empfohlen): ein zweiter playit-Tunnel nur für die Pakete')),

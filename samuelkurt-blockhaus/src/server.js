@@ -19,7 +19,7 @@ const software = require('./lib/software');
 const packs = require('./lib/packs');
 const { createPackFront } = require('./lib/packserver');
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -278,7 +278,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
-    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25566 });
+    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700 });
     if (handled) return;
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
@@ -349,7 +349,7 @@ if (require.main === module) {
   });
   app.listen(port, '0.0.0.0', () => console.log(`Blockhaus läuft auf Port ${port}`));
   // Public side: texture-pack download (+ forwarding of Minecraft traffic). See lib/packserver.js.
-  const packPort = Number(process.env.PACK_PORT) || 25566;
+  const packPort = Number(process.env.PACK_PORT) || 25700;
   const front = createPackFront({
     publicDir: packs.publicDir(process.env.DATA_DIR || '/data'),
     upstream: () => app.config.get().packUpstream,

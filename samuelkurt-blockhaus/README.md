@@ -3,7 +3,7 @@
 German-language, Aternos-style panel for a Minecraft server managed by Crafty Controller 4.
 Owner only, no public page. Friends connect with the normal Minecraft address.
 
-## What is in this version (0.4.0)
+## What is in this version (0.4.1)
 
 | Page | What it does |
 |---|---|
@@ -49,16 +49,16 @@ in a subfolder or invalid for 26.x, over 250 MB). "In meine Pakete übernehmen" 
 hosting by Blockhaus always writes an id.
 
 **Second tunnel (recommended) or tunnel switch.** The pack port can be reached over a *second* playit tunnel (Custom TCP,
-local 127.0.0.1:25566, address entered as "Download-Adresse für Pakete" in the settings); Minecraft then stays untouched.
+local 127.0.0.1:25700, address entered as "Download-Adresse für Pakete" in the settings); Minecraft then stays untouched.
 The other way is the single-tunnel setup below.
 
-**How the download reaches your friends (single tunnel).** Blockhaus listens on port 25566 (published by the compose file, not behind
+**How the download reaches your friends (single tunnel).** Blockhaus listens on port 25700 (not 25566: Crafty publishes 25500-25600, so any port in that range makes the install fail; published by the compose file, not behind
 the Umbrel login) and answers `GET /p/<file>.zip` for published packs only. Everything that is not HTTP is forwarded
 unchanged to Crafty (setting "Minecraft-Server für die Weiterleitung", default `host.docker.internal:25565`). So in the
-**playit.gg dashboard change the local port of your Minecraft tunnel from 25565 to 25566**: the same public address then
+**playit.gg dashboard change the local port of your Minecraft tunnel from 25565 to 25700**: the same public address then
 serves Minecraft and the pack. The pack URL is `http://<public address>/p/<file>.zip`, built from the public address
 in the settings (or the optional pack address). Direct connections to 25565 (LAN, Tailscale) are unaffected, but while
-the tunnel points at 25566 friends cannot join via playit if Blockhaus is down. "Von außen testen" downloads the pack
+the tunnel points at 25700 friends cannot join via playit if Blockhaus is down. "Von außen testen" downloads the pack
 through the public address and compares the SHA-1.
 
 Packs must stay under 250 MB after merging (the client's limit).

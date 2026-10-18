@@ -652,7 +652,7 @@ async function viewSettings() {
       field('Öffentliche Adresse für Freunde', f.publicAddress, 'Wird auf der Server-Seite zum Kopieren angezeigt (z. B. von playit.gg).'),
       field('Adresse im Heimnetz', f.localAddress)),
     h('div', { class: 'card' }, h('h2', {}, 'Texturpakete'),
-      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, 'Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port 25566, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port 25566 zeigen.'),
+      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, 'Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port 25700, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port 25700 zeigen.'),
       field('Minecraft-Server für die Weiterleitung', f.packUpstream, 'Blockhaus leitet Minecraft-Verbindungen, die über den Pack-Port kommen, an diese Adresse weiter (Standard: Crafty auf Port 25565).')),
     h('div', { class: 'row' }, h('button', { onclick: test }, 'Verbindung testen'), h('button', { class: 'primary', onclick: save }, 'Speichern')),
     h('div', { style: 'margin-top:14px' }, result));
