@@ -134,6 +134,17 @@ class Local {
 
   dirOf(rec) { return path.join(this.serversDir, rec.dir); }
 
+  /** Running Minecraft processes (for the computer's performance page). */
+  runtimePids() {
+    const out = [];
+    for (const [id, r] of this.rt) {
+      const rec = this.registry.servers.find((s) => s.id === id);
+      if (r.proc && r.proc.pid) out.push({ id, name: rec ? rec.name : id, pid: r.proc.pid });
+    }
+    return out;
+  }
+
+
   _shape(s) {
     return {
       server_id: s.id, server_name: s.name, server_port: this.port,

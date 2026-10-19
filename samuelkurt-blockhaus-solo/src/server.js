@@ -2,6 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 
 const { Config } = require('./lib/config');
 const { Crafty, CraftyError } = require('./lib/crafty');
@@ -20,6 +21,10 @@ const packs = require('./lib/packs');
 const { createPackFront } = require('./lib/packserver');
 const { Local, LocalError } = require('./lib/local');
 const javaLib = require('./lib/java');
+const { Auth, sameOrigin } = require('./lib/auth');
+const { HostStats } = require('./lib/hoststats');
+const { Terminals } = require('./lib/terminal');
+const ws = require('./lib/websocket');
 
 const VERSION = '0.5.0';
 
@@ -66,11 +71,19 @@ function readJson(req, limit = 1024 * 1024) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'public'), lookup = players.mojangLookup, settleMs = 800, softwareInstall = software.install,
-  mode = process.env.BLOCKHAUS_MODE === 'local' ? 'local' : 'crafty', mcPort = Number(process.env.MC_PORT) || 25665, localOpts = {} } = {}) {
+  mode = process.env.BLOCKHAUS_MODE === 'local' ? 'local' : 'crafty', mcPort = Number(process.env.MC_PORT) || 25665, localOpts = {},
+  // Dedicated-server mode (BLOCKHAUS_HOST=1): own login + "Leistung" (computer performance) + "Terminal" (shell). Off on Umbrel, where
+  // Umbrel's login sits in front of the app and a shell inside the container would be of no use.
+  hostTools = process.env.BLOCKHAUS_HOST === '1', terminalOpts = {}, hostOpts = {}, authClock } = {}) {
   const config = new Config(dataDir);
+  const authOn = hostTools || process.env.BLOCKHAUS_AUTH === '1';
+  const auth = authOn ? new Auth(dataDir, authClock ? { now: authClock } : {}) : null;
+  const terminals = hostTools ? new Terminals(terminalOpts) : null;
   // "local": Blockhaus runs Minecraft itself (Local has the same methods as the Crafty client). "crafty": talk to Crafty.
   const local = mode === 'local' ? new Local({ dataDir, serversDir, port: mcPort, ...localOpts }) : null;
   const crafty = local || new Crafty(() => config.get());
+  const hostStats = hostTools ? new HostStats({ minecraft: () => (local ? local.runtimePids() : []), paths: [serversDir, dataDir], ...hostOpts }) : null;
+  const isSecure = (req) => !!req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 
   // ---- helpers --------------------------------------------------------------------------
   const jobs = new Jobs();
@@ -148,6 +161,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
 
   function configView() {
     const v = { ...config.publicView(), appVersion: VERSION, mode, packPort: Number(process.env.PACK_PORT) || 25700 };
+    v.host = hostTools;
     if (local) Object.assign(v, { configured: true, mcPort: local.port, packUpstream: `127.0.0.1:${local.port}`, voicePort: 24454 });
     return v;
   }
@@ -219,6 +233,45 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
     const m = req.method;
     const p = url.pathname.replace(/^\/api/, '');
     let r;
+
+    // ---- login (only when Blockhaus runs without Umbrel's login in front of it) ----------------------------
+    if (m === 'GET' && p === '/session') {
+      return send(res, 200, { auth: authOn, host: hostTools, configured: auth ? auth.isConfigured() : true, authenticated: auth ? !!auth.sessionOf(req) : true });
+    }
+    if (authOn) {
+      if (!sameOrigin(req)) throw new HttpError(403, 'Anfrage von einer fremden Seite abgelehnt.');
+      if (m === 'POST' && p === '/login') {
+        const b = await readJson(req, 4096);
+        const out = auth.login(b.password, req.socket.remoteAddress || '?');
+        if (!out.ok) return send(res, out.status, { error: out.error, ...(out.retryAfterS ? { retryAfterS: out.retryAfterS } : {}) }, out.retryAfterS ? { 'Retry-After': String(out.retryAfterS) } : {});
+        return send(res, 200, { ok: true }, { 'Set-Cookie': auth.setCookie(out.token, out.maxAgeS, isSecure(req)) });
+      }
+      if (m === 'POST' && p === '/logout') {
+        auth.logout(req);
+        return send(res, 200, { ok: true }, { 'Set-Cookie': auth.clearCookie(isSecure(req)) });
+      }
+      if (!auth.sessionOf(req)) return send(res, 401, { error: 'Bitte anmelden.', code: 'LOGIN' });
+    }
+
+    // ---- computer: performance and terminal ----------------------------------------------------------------
+    if (p.startsWith('/host/')) {
+      if (!hostTools) throw new HttpError(404, 'Diese Funktion ist auf diesem Gerät nicht aktiv.');
+      if (m === 'GET' && p === '/host/stats') {
+        const w = Math.max(30, Math.min(3600, Number(url.searchParams.get('window')) || 300));
+        return send(res, 200, hostStats.snapshot(w));
+      }
+      if (m === 'GET' && p === '/host/terminals') return send(res, 200, { terminals: terminals.list(), shell: terminals.shell, user: os.userInfo().username, cwd: terminals.cwd });
+      if (m === 'POST' && p === '/host/terminals') {
+        const b = await readJson(req);
+        try { return send(res, 201, terminals.create(b).view()); }
+        catch (e) { throw new HttpError(e.status || 500, e.message); }
+      }
+      if (m === 'DELETE' && (r = /^\/host\/terminals\/([0-9a-f]+)$/.exec(p))) {
+        if (!terminals.close(r[1])) throw new HttpError(404, 'Dieses Terminal gibt es nicht (mehr).');
+        return send(res, 200, { ok: true });
+      }
+      throw new HttpError(404, 'Unbekannter Endpunkt.');
+    }
 
     if (m === 'GET' && p === '/config') return send(res, 200, configView());
     if (m === 'PUT' && p === '/config') {
@@ -415,19 +468,58 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       return send(res, 500, { error: 'Interner Fehler: ' + (e && e.message ? e.message : e) });
     }
   });
+  // Terminal: WebSocket on /api/host/terminals/<id>/ws (same login and same-origin rules as the API)
+  server.on('upgrade', (req, socket) => {
+    socket.on('error', () => {});
+    const deny = (code, text) => socket.end(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    try {
+      const m = /^\/api\/host\/terminals\/([0-9a-f]+)\/ws$/.exec(new URL(req.url, 'http://x').pathname);
+      if (!m || !terminals) return deny(404, 'Not Found');
+      if (!sameOrigin(req) || !req.headers.origin) return deny(403, 'Forbidden');    // browsers always send Origin on WebSockets
+      if (!auth.sessionOf(req)) return deny(401, 'Unauthorized');
+      const session = terminals.get(m[1]);
+      if (!session) return deny(404, 'Not Found');
+      const sock = ws.accept(req, socket);
+      if (sock) session.attach(sock);
+    } catch { deny(400, 'Bad Request'); }
+  });
   server.config = config;
   server.local = local;
   server.mode = mode;
+  server.auth = auth;
+  server.terminals = terminals;
+  server.hostStats = hostStats;
   return server;
 }
 
-if (require.main === module) {
+async function passwordCli(argv) {
+  const dataDir = process.env.DATA_DIR || '/data';
+  const auth = new Auth(dataDir);
+  let pw;
+  if (argv.includes('--set-password-stdin')) {
+    pw = await new Promise((resolve) => { let b = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => { b += c; }); process.stdin.on('end', () => resolve(b.replace(/\r?\n$/, ''))); });
+  } else {
+    const { promptHidden, MIN_PASSWORD } = require('./lib/auth');
+    pw = await promptHidden(`Neues Passwort für Blockhaus (mindestens ${MIN_PASSWORD} Zeichen): `);
+    const again = await promptHidden('Noch einmal: ');
+    if (pw !== again) throw new Error('Die Eingaben stimmen nicht überein.');
+  }
+  auth.setPassword(pw);
+  console.log(`Passwort gespeichert (${auth.file}). Alle angemeldeten Browser müssen sich neu anmelden.`);
+}
+
+if (require.main === module && process.argv.some((a) => a === '--set-password' || a === '--set-password-stdin')) {
+  passwordCli(process.argv).then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });
+} else if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
   const app = createApp({
     dataDir: process.env.DATA_DIR || '/data',
     serversDir: process.env.SERVERS_DIR || '/servers',
   });
-  app.listen(port, '0.0.0.0', () => console.log(`Blockhaus läuft auf Port ${port} (${app.mode === 'local' ? 'eigenständig' : 'mit Crafty'})`));
+  app.listen(port, process.env.BIND || '0.0.0.0', () => console.log(`Blockhaus läuft auf Port ${port} (${app.mode === 'local' ? 'eigenständig' : 'mit Crafty'}${app.auth ? ', mit Login' : ''}${app.terminals ? ', mit Leistung und Terminal' : ''})`));
+  if (app.hostStats) app.hostStats.start();
+  if (app.auth && !app.auth.isConfigured()) console.warn('ACHTUNG: Es ist noch kein Passwort gesetzt, niemand kann sich anmelden. Setzen mit: node server.js --set-password');
+  if (app.terminals && !app.local) { for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { app.terminals.closeAll(); setTimeout(() => process.exit(0), 300); }); }
   if (app.local) {
     app.local.autostart((m) => console.log(m)).catch((e) => console.error('Autostart:', e.message));
     // docker stop sends SIGTERM: let Minecraft save and exit instead of being killed with the container
@@ -435,6 +527,7 @@ if (require.main === module) {
     const bye = async (sig) => {
       if (closing) return; closing = true;
       console.log(`${sig}: Minecraft wird sauber beendet …`);
+      if (app.terminals) app.terminals.closeAll();
       try { await app.local.shutdown(); } catch (e) { console.error(e.message); }
       process.exit(0);
     };
