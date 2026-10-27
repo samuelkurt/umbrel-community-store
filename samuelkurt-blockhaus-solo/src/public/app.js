@@ -85,6 +85,7 @@ const ICONS = {
   chart: '<path d="M4 20V4M4 20h16"/><path d="M8 15l3-4 3 2 4-6"/>',
   shell: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10l3 2.5L7 15M12.5 15H17"/>',
   logout: '<path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/>',
+  shield: '<path d="M12 3 5 6v5.5c0 4.4 2.9 8 7 9.5 4.1-1.5 7-5.1 7-9.5V6z"/><path d="M9 12l2 2 4-4"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
 };
 function icon(name) {
@@ -109,6 +110,7 @@ const ROUTES = [
   { id: 'players', label: 'Spieler', icon: 'users', view: viewPlayers },
   { id: 'console', label: 'Konsole', icon: 'terminal', view: viewConsole },
   { id: 'inventory', label: 'Inventare', icon: 'backpack', view: (t) => window.BHViews.inventory(t) },
+  { id: 'anticheat', label: 'Anticheat', icon: 'shield', only: 'local', view: (t) => window.BHAnticheat.page(t) },
   { id: 'log', label: 'Log', icon: 'log', view: viewLog },
   { id: 'sep' },
   { id: 'files', label: 'Dateien', icon: 'folder', view: (t) => window.BHViews.files(t) },
@@ -137,6 +139,22 @@ function renderNav(active) {
   nav.replaceChildren(...items);
 }
 
+/** Number of open anticheat reports next to the menu entry (all servers). Failing quietly: it is only a hint. */
+async function refreshAnticheatBadge() {
+  if (!S.cfg || S.cfg.mode !== 'local') return;
+  try {
+    const r = await api('GET', '/anticheat/summary');
+    const open = r.servers.reduce((n, x) => n + (x.enabled ? x.open : 0), 0);
+    const high = r.servers.reduce((n, x) => n + (x.enabled ? x.high : 0), 0);
+    const a = nav.querySelector('a[href="#/anticheat"]');
+    if (!a) return;
+    for (const old of a.querySelectorAll('.badge')) old.remove();
+    if (open) a.append(h('span', { class: 'badge' + (high ? ' hi' : ''), title: `${open} offene Meldungen${high ? `, ${high} schwer` : ''}` }, String(open)));
+  } catch { /* hint only */ }
+}
+
+setInterval(() => { if (!document.hidden) refreshAnticheatBadge(); }, 30000);
+
 async function route() {
   const token = ++routeToken;
   clearTimers();
@@ -152,6 +170,7 @@ async function route() {
     if (id === 'servers' && S.cfg.mode !== 'local') id = 'server';
     if (HOST_ROUTES.has(id) && !S.cfg.host) id = 'server';
     renderNav(id);
+    refreshAnticheatBadge();
     const def = ROUTES.find((r) => r.id === id);
     if (HOST_ROUTES.has(id)) { await def.view(token); return; }   // these two do not need a Minecraft server
     if (!S.cfg.configured && id !== 'settings') { location.hash = '#/settings'; return; }
@@ -708,7 +727,7 @@ async function viewSettings() {
     h('div', { style: 'margin-top:14px' }, result));
 }
 
-window.BH = { h, put, api, toast, store, icon, S, P, header, every, errorBox, stripAnsi, avatar, route, getToken: () => routeToken, main };
+window.BH = { h, put, api, toast, store, icon, S, P, header, every, errorBox, stripAnsi, avatar, route, getToken: () => routeToken, main, refreshAnticheatBadge };
 window.addEventListener('hashchange', route);
 // start after views.js and host.js have been loaded too
 if (document.readyState === 'complete') route(); else window.addEventListener('load', route);

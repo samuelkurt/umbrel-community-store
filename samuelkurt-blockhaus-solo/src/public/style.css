@@ -272,3 +272,7 @@ table.procs td, table.procs th { word-break: normal; }
 .xt-box .xterm-viewport { background: transparent !important; }
 .xt-keys { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 @media (max-width: 760px) { .chartgrid { grid-template-columns: 1fr; } .xt-area { height: 55vh; } }
+
+/* anticheat: count next to the menu entry */
+#nav .badge { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 99px; background: var(--warn); color: #1a1405; font-size: 12px; font-weight: 700; text-align: center; line-height: 20px; }
+#nav .badge.hi { background: var(--danger); color: #fff; }

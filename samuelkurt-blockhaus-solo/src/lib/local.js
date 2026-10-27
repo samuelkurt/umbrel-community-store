@@ -104,6 +104,8 @@ class Local {
     this.ensureJava = ensureJava;
     this.file = path.join(dataDir, 'local-servers.json');
     this.rt = new Map();
+    /** Functions (serverId, text) -> true to keep that console line out of the in-memory console view (used by the anticheat). */
+    this.lineHooks = new Set();
     this.jwt = null; // the panel resets this on config changes when it talks to Crafty; harmless here
     this.registry = this._load();
     this.timer = null;
@@ -307,8 +309,12 @@ class Local {
 
   _line(r, text) {
     const t = String(text).replace(ANSI, '').replace(/\r/g, '');
-    r.lines.push(t);
-    if (r.lines.length > MAX_LINES) r.lines.splice(0, r.lines.length - MAX_LINES);
+    let hide = false;
+    for (const h of this.lineHooks) { try { if (h(r.rec.id, t) === true) hide = true; } catch { /* a hook must never break the console */ } }
+    if (!hide) {
+      r.lines.push(t);
+      if (r.lines.length > MAX_LINES) r.lines.splice(0, r.lines.length - MAX_LINES);
+    }
     if (r.proc && r.state === 'starting' && DONE_RE.test(t)) { r.state = 'online'; r.notice = ''; this._ping(r); }
     if (/Stopping (the )?server/.test(t) && r.proc) r.state = 'stopping';
     let m;

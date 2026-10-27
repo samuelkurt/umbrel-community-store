@@ -3,6 +3,7 @@
 The Blockhaus panel (see `../samuelkurt-blockhaus/README.md` for every page) with its **own Minecraft engine**:
 no Crafty Controller. Blockhaus starts the Java process, reads its console, pings it and stops it cleanly.
 The code is the same as in Blockhaus; `src/` here is a copy made by `node scripts/sync-solo.js` from the store root.
+Since 0.7.0 it has the **Anticheat** page (records only, see the Blockhaus README); the Crafty app does not.
 
 ## What differs from Blockhaus (with Crafty)
 

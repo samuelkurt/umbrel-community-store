@@ -20,13 +20,14 @@ const software = require('./lib/software');
 const packs = require('./lib/packs');
 const { createPackFront } = require('./lib/packserver');
 const { Local, LocalError } = require('./lib/local');
+const { Anticheat } = require('./lib/anticheat');
 const javaLib = require('./lib/java');
 const { Auth, sameOrigin } = require('./lib/auth');
 const { HostStats } = require('./lib/hoststats');
 const { Terminals } = require('./lib/terminal');
 const ws = require('./lib/websocket');
 
-const VERSION = '0.5.0';
+const VERSION = '0.7.0';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -74,7 +75,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
   mode = process.env.BLOCKHAUS_MODE === 'local' ? 'local' : 'crafty', mcPort = Number(process.env.MC_PORT) || 25665, localOpts = {},
   // Dedicated-server mode (BLOCKHAUS_HOST=1): own login + "Leistung" (computer performance) + "Terminal" (shell). Off on Umbrel, where
   // Umbrel's login sits in front of the app and a shell inside the container would be of no use.
-  hostTools = process.env.BLOCKHAUS_HOST === '1', terminalOpts = {}, hostOpts = {}, authClock } = {}) {
+  hostTools = process.env.BLOCKHAUS_HOST === '1', terminalOpts = {}, hostOpts = {}, anticheatOpts = {}, authClock } = {}) {
   const config = new Config(dataDir);
   const authOn = hostTools || process.env.BLOCKHAUS_AUTH === '1';
   const auth = authOn ? new Auth(dataDir, authClock ? { now: authClock } : {}) : null;
@@ -82,6 +83,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
   // "local": Blockhaus runs Minecraft itself (Local has the same methods as the Crafty client). "crafty": talk to Crafty.
   const local = mode === 'local' ? new Local({ dataDir, serversDir, port: mcPort, ...localOpts }) : null;
   const crafty = local || new Crafty(() => config.get());
+  const anticheat = local ? new Anticheat({ dataDir, local, ...anticheatOpts }).start() : null;
   const hostStats = hostTools ? new HostStats({ minecraft: () => (local ? local.runtimePids() : []), paths: [serversDir, dataDir], ...hostOpts }) : null;
   const isSecure = (req) => !!req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 
@@ -280,6 +282,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       crafty.jwt = null;
       return send(res, 200, configView());
     }
+    if (local && m === 'GET' && p === '/anticheat/summary') return send(res, 200, { servers: anticheat.summary() });
     if (local && await localApi(req, res, m, p)) return;
     if (m === 'POST' && p === '/config/test') {
       if (local) { await readJson(req); return send(res, 200, { ok: true, servers: (await local.servers()).map((s) => ({ id: s.server_id, name: s.server_name, filesFound: true })) }); }
@@ -408,7 +411,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
-    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700, mode, voiceSuggested: local ? 24454 : 19132 });
+    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700, mode, voiceSuggested: local ? 24454 : 19132, anticheat });
     if (handled) return;
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
@@ -485,6 +488,8 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
   });
   server.config = config;
   server.local = local;
+  server.anticheat = anticheat;
+  server.on('close', () => { if (anticheat) anticheat.stop(); });
   server.mode = mode;
   server.auth = auth;
   server.terminals = terminals;
@@ -529,6 +534,7 @@ if (require.main === module && process.argv.some((a) => a === '--set-password' |
       console.log(`${sig}: Minecraft wird sauber beendet …`);
       if (app.terminals) app.terminals.closeAll();
       try { await app.local.shutdown(); } catch (e) { console.error(e.message); }
+      if (app.anticheat) app.anticheat.stop();
       process.exit(0);
     };
     process.on('SIGTERM', () => bye('SIGTERM'));
