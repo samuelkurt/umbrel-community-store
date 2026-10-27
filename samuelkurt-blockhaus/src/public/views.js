@@ -951,7 +951,7 @@ async function viewGamerules(token) {
         liveSwitch(() => d.nether, async (v) => { await setRule('allow_entering_nether_using_portals', v); d.nether = v; }, 'Nether betretbar')),
     h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'End betretbar'),
       h('small', {}, d.end.supported
-        ? `Minecraft hat dafür keinen Schalter. „Aus“ legt ein kleines Datenpaket in die Welt (datapacks/blockhaus_noend), das jeden Spieler im End sofort zum Welt-Spawn der Oberwelt zurückschickt. Ausnahme für dich: /tag ${'<Name>'} add ${d.end.tag}.`
+        ? `Minecraft hat dafür keinen Schalter. „Aus“ legt ein kleines Datenpaket in die Welt (datapacks/blockhaus_noend), das jeden Spieler im End sofort zu seinem Bett (Respawn-Anker oder /spawnpoint) zurückschickt, ohne eigenen Spawn oder bei zerstörtem Bett zum Welt-Spawn der Oberwelt. Ausnahme für dich: /tag ${'<Name>'} add ${d.end.tag}.`
         : 'Vor Minecraft 1.21 lässt sich das End mit Blockhaus nicht sperren (die Datenpakete nutzen dort andere Ordnernamen).')),
       d.end.supported ? liveSwitch(() => !d.end.locked, async (open) => {
         const r = await api('PUT', P('/gamerules/end'), { locked: !open });

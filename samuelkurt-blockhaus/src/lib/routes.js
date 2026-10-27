@@ -206,6 +206,14 @@ async function handle(c) {
       return null;
     }
     if (m === 'GET' && rest === 'gamerules') {
+      // a pack written by an older Blockhaus is brought up to date (and loaded, if the server is running)
+      if (noend.stale(worldDir)) {
+        try {
+          const f = await jarFormat();
+          await noend.install(worldDir, { jarFile: f ? f.jar : null, mcVersion: inst && inst.version });
+          if (running) await serverfiles.ask({ dir, send: sendCommand, command: 'reload', until: /Reloading!/, timeoutMs: 8000 }).catch(() => null);
+        } catch { /* stays as it is; switching it off and on again does the same */ }
+      }
       const g = await fresh(q('sync') === '1');
       const era = gamerules.eraOf(inst && inst.version);
       const nether = g.rules.find((x) => x.name === gamerules.NETHER);

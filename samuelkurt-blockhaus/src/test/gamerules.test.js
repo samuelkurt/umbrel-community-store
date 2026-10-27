@@ -72,7 +72,14 @@ test('noend: pack files for the version, nothing for versions without function/,
   assert.deepEqual(JSON.parse(f['pack.mcmeta']).pack, { description: 'Blockhaus: sperrt das End', min_format: 121, max_format: 121 });
   assert.deepEqual(JSON.parse(f['data/minecraft/tags/function/tick.json']).values, ['blockhaus_noend:tick']);
   assert.match(f['data/blockhaus_noend/function/tick.mcfunction'], /^execute as @a\[tag=!end_erlaubt\] at @s if dimension minecraft:the_end run function blockhaus_noend:zurueck\n$/);
-  assert.match(f['data/blockhaus_noend/function/zurueck.mcfunction'], /^execute in minecraft:overworld run tp @s -528 69 64\ntitle @s actionbar \{"text":"Das End ist auf diesem Server gesperrt\.","color":"red"\}\n$/);
+  const back = f['data/blockhaus_noend/function/zurueck.mcfunction'];
+  assert.match(back, /respawn\.pos run function blockhaus_noend:lesen\n/); // own respawn point first
+  assert.match(back, /unless data storage blockhaus_noend:t fertig run execute in minecraft:overworld run tp @s -528 69 64\n/); // world spawn when there is none
+  assert.match(back, /title @s actionbar \{"text":"Das End ist auf diesem Server gesperrt\.","color":"red"\}\n$/);
+  assert.match(f['data/blockhaus_noend/function/ziel.mcfunction'], /forceload query \$\(x\) \$\(z\)[\s\S]*forceload add[\s\S]*positioned \$\(x\) \$\(y\) \$\(z\)[\s\S]*unless data storage blockhaus_noend:t \{fest:1b\} in \$\(d\) run forceload remove/); // only removes a ticket it set itself
+  assert.match(f['data/blockhaus_noend/function/pruefen.mcfunction'], /#minecraft:beds[\s\S]*respawn_anchor[\s\S]*forced:1b/);
+  assert.match(f['data/blockhaus_noend/function/lesen.mcfunction'], /unless data storage blockhaus_noend:t r\{d:"minecraft:the_end"\}/); // never "back" into the End
+  for (const [k, text] of Object.entries(f)) if (k.endsWith('.mcfunction')) for (const line of text.split('\n').filter(Boolean)) assert.equal(line.includes('$('), line.startsWith('$'), `${k}: ${line}`); // macro lines (and only those) start with $
   assert.deepEqual(JSON.parse(noend.files({ fmt: { style: 'legacy', format: 48 }, spawn: [0, 64, 0] })['pack.mcmeta']).pack, { description: 'Blockhaus: sperrt das End', pack_format: 48 });
   assert.throws(() => noend.files({ fmt: { style: 'legacy', format: 26 }, spawn: [0, 64, 0] }), (e) => e.status === 409 && /1\.21/.test(e.message));
   assert.throws(() => noend.files({ fmt: null, spawn: [0, 64, 0] }), (e) => e.status === 409);
@@ -87,6 +94,12 @@ test('noend: install and remove touch only their own folder', async () => {
   assert.equal(noend.installed(w), true);
   assert.match(fs.readFileSync(path.join(noend.folderOf(w), 'data', 'blockhaus_noend', 'function', 'zurueck.mcfunction'), 'utf8'), /tp @s 10 70 -3/);
   await noend.install(w, { jarFile: jar }); // again: fine
+  assert.equal(noend.stale(w), false);
+  fs.writeFileSync(path.join(noend.folderOf(w), 'blockhaus.rev'), '1\n'); // an older Blockhaus wrote revision 1 (world spawn only)
+  assert.equal(noend.stale(w), true);
+  fs.rmSync(path.join(noend.folderOf(w), 'blockhaus.rev'));
+  assert.equal(noend.stale(w), true);
+  await noend.install(w, { jarFile: jar }); assert.equal(noend.stale(w), false);
   assert.equal(await noend.remove(w), true); assert.equal(fs.existsSync(noend.folderOf(w)), false); assert.equal(await noend.remove(w), false);
   // a folder of the same name that is not ours stays untouched
   fs.mkdirSync(noend.folderOf(w), { recursive: true }); fs.writeFileSync(path.join(noend.folderOf(w), 'pack.mcmeta'), '{"pack":{"description":"fremd"}}');
