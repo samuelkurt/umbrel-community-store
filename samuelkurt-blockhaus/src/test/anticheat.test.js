@@ -600,6 +600,22 @@ test('self-test: places test items, finds them live and in the file, removes the
   } finally { r.done(); }
 });
 
+test('self-test: a player the server knows but Blockhaus has not seen joining is still tested (the server is asked); a typed name needs no list', async () => {
+  const r = rig();
+  try {
+    r.add('Me', { items: new Map() });
+    r.online(); // Blockhaus' own player list is empty (the join line was not recognised)
+    const st = r.ac.startSelfTest('s1', 'Me');
+    await waitFor(() => !st.running, 15000, 'self-test');
+    assert.equal(st.steps[0].status, 'warn'); assert.match(st.steps[0].detail, /Server bestätigt/);
+    assert.equal(st.summary.fail, 0, JSON.stringify(st.steps.filter((x) => x.status === 'fail')));
+    assert.ok(st.steps.some((x) => /Entfernen: Inventar/.test(x.name) && x.status === 'ok'));
+    // the view offers the known names for the type-ahead list
+    fs.writeFileSync(path.join(r.dir, 'usercache.json'), JSON.stringify([{ name: 'Anna', uuid: '00000000-0000-0000-0000-000000000009' }]));
+    assert.deepEqual(r.ac.view('s1').known, ['Anna']);
+  } finally { r.done(); }
+});
+
 test('self-test: a server that never answers is reported with the last console lines, and nothing is left behind', async () => {
   const r = rig();
   try {

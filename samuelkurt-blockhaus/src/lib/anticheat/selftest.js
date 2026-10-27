@@ -58,10 +58,14 @@ class SelfTest {
       const on = await this.step('Server läuft, Spieler ist online', async () => {
         if (!NAME_RE.test(P)) throw new Error('Ungültiger Spielername.');
         if (!ac.isOnline(sid)) throw new Error('Der Server läuft nicht.');
-        if (!ac.onlineNames(sid).some((n) => lc(n) === lc(P))) throw new Error(`${P} ist nicht online. Tritt dem Server bei und starte den Test erneut.`);
-        return { detail: `${P} ist online.` };
+        if (ac.onlineNames(sid).some((n) => lc(n) === lc(P))) return { detail: `${P} ist online.` };
+        // Blockhaus may have missed the join (it reads the console): the server itself is the better witness
+        const r = await this.q('Pos');
+        if (r && !r.offline) return { status: 'warn', detail: `${P} ist online (der Server bestätigt es), steht aber nicht in Blockhaus' Spielerliste. Meist wurde der Beitritt nicht in der Konsole erkannt.` };
+        if (r && r.offline) throw new Error(`${P} ist nicht online. Tritt dem Server bei und starte den Test erneut.`);
+        throw new Error(`Keine Antwort des Servers auf die Frage, ob ${P} online ist. Letzte Konsolenzeilen: ${this.raw() || '(keine)'}`);
       });
-      if (on.status !== 'ok') return skipRest('Ohne laufenden Server und Spieler kann nichts getestet werden.');
+      if (on.status === 'fail') return skipRest('Ohne laufenden Server und Spieler kann nichts getestet werden.');
 
       // ---- speed of the server's answers (this is what every check and every button depends on)
       const lat = await this.step('Antwortzeit des Servers (5 Abfragen)', async () => {

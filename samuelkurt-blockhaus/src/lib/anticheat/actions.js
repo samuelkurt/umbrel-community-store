@@ -74,20 +74,28 @@ async function removeItem(ac, sid, flag) {
 async function act(ac, sid, flag, action, text) {
   const name = flag.player;
   const ev = flag.evidence || {};
-  const online = () => ac.onlineNames(sid).some((n) => n.toLowerCase() === String(name).toLowerCase());
+  // Blockhaus' own player list comes from console lines it may not have recognised; the server is the better witness.
+  let seen = null;
+  const online = async () => {
+    if (seen !== null) return seen;
+    if (ac.onlineNames(sid).some((n) => n.toLowerCase() === String(name).toLowerCase())) return (seen = true);
+    const r = await ac.query(sid, name, 'Pos', Q);
+    if (!r) throw err(504, 'Der Server hat nicht rechtzeitig geantwortet (nach 8 s), ob der Spieler online ist. Ist er überlastet? Versuche es noch einmal.');
+    return (seen = !r.offline);
+  };
   const needPlayer = () => { if (!NAME_RE.test(name || '') || ev.nameKnown === false) throw err(409, 'Der Spielername ist nicht sicher bekannt. Nutze die Spielerliste.'); };
   const needRunning = () => { if (!ac.isOnline(sid)) throw err(409, 'Der Server läuft nicht.'); };
   switch (action) {
     case 'remove-item': {
       if (!ITEM_TYPES.has(flag.type)) throw err(400, 'Diese Meldung betrifft kein Item.');
       needPlayer(); needRunning();
-      if (!online()) return { pending: true, message: `${name} ist nicht online. Das Item wird entfernt, sobald ${name} beitritt.`, note: 'Entfernen vorgemerkt' };
+      if (!(await online())) return { pending: true, message: `${name} ist nicht online. Das Item wird entfernt, sobald ${name} beitritt.`, note: 'Entfernen vorgemerkt' };
       const r = await removeItem(ac, sid, flag);
       return { message: `Entfernt: ${r.note}. Eine Kopie steht in den Details.`, ...r };
     }
     case 'kick': {
       needPlayer(); needRunning();
-      if (!online()) throw err(409, `${name} ist nicht online.`);
+      if (!(await online())) throw err(409, `${name} ist nicht online.`);
       const reason = cleanText(text, 'Vom Server-Admin entfernt');
       await ac.local.stdin(sid, `kick ${name} ${reason}`);
       return { message: `${name} wurde gekickt.`, note: `gekickt: ${reason}` };
@@ -100,7 +108,7 @@ async function act(ac, sid, flag, action, text) {
     }
     case 'tell': {
       needPlayer(); needRunning();
-      if (!online()) throw err(409, `${name} ist nicht online.`);
+      if (!(await online())) throw err(409, `${name} ist nicht online.`);
       const msg = cleanText(text, '');
       if (!msg) throw err(400, 'Bitte eine Nachricht eingeben.');
       await ac.local.stdin(sid, `tell ${name} ${msg}`);
@@ -109,7 +117,7 @@ async function act(ac, sid, flag, action, text) {
     case 'tp-back': {
       if (flag.type !== 'teleport' || !Array.isArray(ev.from) || !/^[a-z0-9_.:-]+$/i.test(ev.dim || '')) throw err(400, 'Zu dieser Meldung gibt es keine frühere Position.');
       needPlayer(); needRunning();
-      if (!online()) throw err(409, `${name} ist nicht online.`);
+      if (!(await online())) throw err(409, `${name} ist nicht online.`);
       const [x, y, z] = ev.from.map((n) => Number(n));
       if (![x, y, z].every(Number.isFinite)) throw err(400, 'Ungültige Position.');
       await ac.local.stdin(sid, `execute in ${ev.dim} run tp ${name} ${x} ${y} ${z}`);

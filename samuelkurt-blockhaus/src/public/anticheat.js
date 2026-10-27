@@ -93,16 +93,17 @@ async function page(token) {
   // ---- self-test: runs on the real server with a player you pick
   const ST_ICON = { ok: '✓', warn: '⚠', fail: '✗', skip: '–', run: '…' };
   const stBox = h('div', {});
-  const pick = h('select', { 'aria-label': 'Spieler für den Selbsttest', style: 'width:auto;min-width:160px' });
+  const pick = h('input', { type: 'text', list: 'ac-st-players', placeholder: 'Spielername', 'aria-label': 'Spieler für den Selbsttest', autocomplete: 'off', spellcheck: 'false', maxlength: '16', style: 'width:auto;min-width:180px' });
+  const pickList = h('datalist', { id: 'ac-st-players' });
   let stState = null; let stBusy = false; let runningShown = d.running;
   const lastPlayer = () => { try { return localStorage.getItem('bh-ac-selftest-player') || ''; } catch { return ''; } };
   function fillPick() {
-    const names = d.players.filter((p) => p.online).map((p) => p.name);
-    const want = pick.value || lastPlayer();
-    const have = [...pick.options].map((o) => o.value).join('|');
-    if (have === (names.length ? names : ['']).join('|')) return false;
-    pick.replaceChildren(...(names.length ? names : ['']).map((n) => h('option', { value: n }, n || '(niemand online)')));
-    if (names.includes(want)) pick.value = want;
+    const on = d.players.filter((p) => p.online).map((p) => p.name);
+    const names = [...on, ...(d.known || []).filter((n) => !on.includes(n))];
+    const have = [...pickList.options].map((o) => o.value).join('|');
+    if (!pick.value) pick.value = on[0] || lastPlayer();
+    if (have === names.join('|')) return false;
+    pickList.replaceChildren(...names.map((n) => h('option', { value: n }, on.includes(n) ? 'online' : 'bekannt')));
     return true;
   }
   async function stPoll() {
@@ -115,8 +116,8 @@ async function page(token) {
     }
   }
   async function stStart() {
-    const who = pick.value;
-    if (!who) { toast('Es ist niemand online. Tritt dem Server bei und wähle dich aus.', true); return; }
+    const who = pick.value.trim();
+    if (!/^[A-Za-z0-9_.]{1,16}$/.test(who)) { toast('Bitte deinen Spielernamen eintragen (Buchstaben, Zahlen, _ und .).', true); return; }
     if (!confirm(`Selbsttest mit „${who}“ starten?\n\nIn leere Plätze von ${who} werden kurz Testitems gelegt (Bedrock, eine Shulkerbox mit Bedrock, ein Barrier-Block als Helm, ein Befehlsblock in der Zweithand, ein Strukturblock in der Endertruhe). Blockhaus findet sie, entfernt sie wieder und räumt auf. Belegte Plätze werden nie angefasst. Dauer: etwa 10 bis 30 Sekunden.`)) return;
     try { localStorage.setItem('bh-ac-selftest-player', who); } catch { /* optional */ }
     stBusy = true;
@@ -129,9 +130,9 @@ async function page(token) {
     const sum = st && st.summary;
     put(stBox, h('div', { class: 'card', id: 'ac-selftest' },
       h('h2', { style: 'margin-top:0' }, 'Selbsttest'),
-      h('p', { class: 'small muted' }, 'Prüft auf dem echten Server mit einem Spieler deiner Wahl, ob Erkennen und Entfernen wirklich funktionieren, und misst, wie lange der Server für Antworten braucht. Starte ihn am besten im Überlebensmodus; für Operatoren und im Kreativmodus meldet der Anticheat im Normalbetrieb keine Items (der Test sagt dir das).'),
+      h('p', { class: 'small muted' }, 'Trage deinen Spielernamen ein oder wähle ihn aus der Liste; du musst auf dem Server sein. Prüft auf dem echten Server mit einem Spieler deiner Wahl, ob Erkennen und Entfernen wirklich funktionieren, und misst, wie lange der Server für Antworten braucht. Starte ihn am besten im Überlebensmodus; für Operatoren und im Kreativmodus meldet der Anticheat im Normalbetrieb keine Items (der Test sagt dir das).'),
       h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;align-items:center' },
-        h('span', {}, 'Spieler:'), pick,
+        h('span', {}, 'Spieler:'), pick, pickList,
         h('button', { class: 'primary', disabled: running || stBusy || !d.running, onclick: mut(stStart) }, running ? 'Läuft …' : 'Selbsttest starten'),
         !d.running ? h('span', { class: 'small muted' }, 'Der Server läuft nicht.') : null),
       st ? h('div', { style: 'margin-top:12px' },

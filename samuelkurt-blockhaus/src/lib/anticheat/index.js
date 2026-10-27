@@ -591,9 +591,11 @@ class Anticheat {
     for (const n of this.onlineNames(sid)) if (!names.has(lc(n))) names.set(lc(n), { name: n, score: 0, open: 0, total: 0, last: 0, level: 'ok' });
     const players = [...names.values()].map((e) => ({ ...e, online: online.has(lc(e.name)), exempt: this.exempt(sid, e.name), op: ops.has(lc(e.name)) }))
       .sort((a, b) => b.score - a.score || (b.online ? 1 : 0) - (a.online ? 1 : 0) || a.name.localeCompare(b.name));
+    let known = [];
+    try { known = [...new Set([...inventory.nameMap(this.dirOf(sid)).values()])].filter((n) => NAME_RE.test(n)).slice(0, 100); } catch { /* no server folder */ }
     const flags = store.flags.filter((f) => !f.selftest).sort((a, b) => b.last - a.last).slice(0, 600);
     return {
-      available: true, config: store.config, defaults: DEFAULTS, running: this.isOnline(sid), counts: store.openCount(), players, flags,
+      available: true, config: store.config, defaults: DEFAULTS, running: this.isOnline(sid), counts: store.openCount(), players, known, flags,
       status: { lastPoll: S.lastPoll, polledPlayers: S.lastRoundPlayers, roundMs: S.lastRoundMs, queries: S.asker.sent, lastFiles: S.lastFiles, lastAllow: S.lastAllow },
     };
   }
