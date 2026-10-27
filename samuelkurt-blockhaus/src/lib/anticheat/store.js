@@ -143,6 +143,14 @@ class Store {
     return f;
   }
 
+  /** Deletes the flags for which fn(flag) is true. */
+  drop(fn) {
+    const before = this.flags.length;
+    this.flags = this.flags.filter((f) => !fn(f));
+    if (this.flags.length !== before) this._touch();
+    return before - this.flags.length;
+  }
+
   ack({ id, player, all }) {
     let n = 0;
     for (const f of this.flags) {

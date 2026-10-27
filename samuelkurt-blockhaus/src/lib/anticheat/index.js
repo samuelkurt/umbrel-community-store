@@ -15,6 +15,7 @@ const motion = require('./motion');
 const xray = require('./xray');
 const allow = require('./allow');
 const actions = require('./actions');
+const { SelfTest } = require('./selftest');
 const { Rates, isPrivateIp } = require('./rates');
 const { Store, normalizeConfig, DEFAULTS } = require('./store');
 
@@ -27,13 +28,17 @@ const SEV = {
 const FILES_EVERY_MS = 60 * 1000;
 const ALLOW_EVERY_MS = 30 * 60 * 1000;
 const ASK_TIMEOUT_MS = 2500;
+// questions an admin waits for (buttons, self-test): the server may be busy, so be patient
+const ADMIN_ASK_MS = 8000;
+const EQUIP = { feet: 100, legs: 101, chest: 102, head: 103, offhand: -106 };
 const MAX_POLLED = 40;
 
 /** One query at a time: the console answers in order, and the answers carry no id. */
 class Asker {
   constructor(send) { this.send = send; this.q = []; this.cur = null; this.sent = 0; }
-  ask(command, accept, timeoutMs = ASK_TIMEOUT_MS) {
-    return new Promise((resolve) => { this.q.push({ command, accept, timeoutMs, resolve }); this._next(); });
+  /** priority: an admin is waiting (button, self-test); the question goes before the routine polling questions. */
+  ask(command, accept, timeoutMs = ASK_TIMEOUT_MS, priority = false) {
+    return new Promise((resolve) => { const c = { command, accept, timeoutMs, resolve }; if (priority) this.q.unshift(c); else this.q.push(c); this._next(); });
   }
   _next() {
     if (this.cur || !this.q.length) return;
@@ -231,9 +236,10 @@ class Anticheat {
 
   // ---- queries -----------------------------------------------------------------------------------------------
   /** `data get entity <name> <path>`. Resolves {value}, {none:true} (path absent), {offline:true} or null (no answer). */
-  async query(sid, name, p) {
+  /** @param {{priority?:boolean, timeout?:number}} [o] */
+  async query(sid, name, p, o = {}) {
     const S = this.S(sid);
-    const ev = await S.asker.ask(`data get entity ${name} ${p}`, (e) => (e.type === 'data' && lc(e.name) === lc(name)) || e.type === 'noEntity' || e.type === 'noElements');
+    const ev = await S.asker.ask(`data get entity ${name} ${p}`, (e) => (e.type === 'data' && lc(e.name) === lc(name)) || e.type === 'noEntity' || e.type === 'noElements', o.timeout || ASK_TIMEOUT_MS, !!o.priority);
     if (!ev) return null;
     if (ev.type === 'noEntity') return { offline: true };
     if (ev.type === 'noElements') return { none: true };
@@ -366,6 +372,43 @@ class Anticheat {
     try { return props.parse(fs.readFileSync(path.join(this.local.dirOf(rec), 'server.properties'), 'utf8')).values['level-name'] || 'world'; } catch { return 'world'; }
   }
 
+  /** Findings in the data of one player: Inventory, EnderItems and worn equipment (from the file or from live queries). */
+  _dataFindings(data) {
+    const eq = data.equipment && typeof data.equipment === 'object' ? data.equipment : {};
+    const equip = Object.entries(EQUIP).filter(([k]) => eq[k] && eq[k].id).map(([k, slot]) => ({ ...eq[k], Slot: slot }));
+    const raw = [...(Array.isArray(data.Inventory) ? data.Inventory : []), ...equip];
+    return [...items.scan(raw, 'Inventar'), ...items.scan(Array.isArray(data.EnderItems) ? data.EnderItems : [], 'Endertruhe')];
+  }
+
+  /** What the player's data file on disk says about this player (exemptions are not applied). null if there is no file. */
+  fileFindings(sid, name) {
+    const rec = this.rec(sid); if (!rec) return null;
+    const dir = this.local.dirOf(rec);
+    const pd = inventory.playerdataDir(dir, this.worldOf(rec));
+    if (!pd) return null;
+    let uuid = null;
+    for (const [u, n] of inventory.nameMap(dir)) if (lc(n) === lc(name)) uuid = u.toLowerCase();
+    if (!uuid) return null;
+    let data;
+    try { data = nbt.parse(fs.readFileSync(path.join(pd, uuid + '.dat'))).value; } catch { return null; }
+    return { uuid, mode: data.playerGameType, findings: this._dataFindings(data) };
+  }
+
+  /** Asks the server what the player carries right now (Inventory, EnderItems, equipment). null if it did not answer in time. */
+  async liveFindings(sid, name) {
+    const get = async (p) => {
+      const r = await this.query(sid, name, p, { priority: true, timeout: ADMIN_ASK_MS });
+      if (!r || r.offline) return null;
+      if (r.none) return { value: null };
+      try { return { value: nbt.parseSnbt(r.value) }; } catch { return null; }
+    };
+    const inv = await get('Inventory'); if (!inv) return null;
+    const ender = await get('EnderItems'); if (!ender) return null;
+    const eq = await get('equipment'); if (!eq) return null;
+    const data = { Inventory: inv.value, EnderItems: ender.value, equipment: eq.value };
+    return { data, findings: this._dataFindings(data) };
+  }
+
   scanItems(sid, { force = false } = {}) {
     const rec = this.rec(sid); if (!rec) return 0;
     const store = this.store(sid); const S = this.S(sid);
@@ -386,10 +429,7 @@ class Anticheat {
       const nameKnown = names.has(uuid);
       if (this.exempt(sid, name)) continue;
       if (store.config.skipCreative && data.playerGameType === 1) continue;
-      const EQUIP = { feet: 100, legs: 101, chest: 102, head: 103, offhand: -106 };
-      const equip = data.equipment && typeof data.equipment === 'object' ? Object.entries(EQUIP).filter(([k]) => data.equipment[k] && data.equipment[k].id).map(([k, slot]) => ({ ...data.equipment[k], Slot: slot })) : [];
-      const raw = [...(Array.isArray(data.Inventory) ? data.Inventory : []), ...equip];
-      for (const fnd of [...items.scan(raw, 'Inventar'), ...items.scan(data.EnderItems, 'Endertruhe')]) {
+      for (const fnd of this._dataFindings(data)) {
         this.flag(sid, fnd.type, { player: name, key: fnd.key, message: `${name}: ${fnd.message}`, evidence: { ...fnd.evidence, nameKnown, uuid } });
         n++;
       }
@@ -440,9 +480,23 @@ class Anticheat {
   }
 
   /** "Check now": everything that reads files, ignoring what was seen before. */
+  /** `item replace entity`: the server's feedback line is taken as the answer (and kept out of the console). Resolves true if it said it replaced something. */
+  async replaceSlot(sid, name, slotCmd, item) {
+    const ev = await this.S(sid).asker.ask(`item replace entity ${name} ${slotCmd} with ${item}`, (e) => e.type === 'replaced' || e.type === 'noEntity', 4000, true);
+    return !!ev && ev.type === 'replaced';
+  }
+
+  /** Asks the server to write everything to disk and waits for its "Saved the game" (at most 10 s). @returns {Promise<{ok:boolean, ms:number}>} */
+  async saveNow(sid) {
+    const t0 = Date.now();
+    if (!this.isOnline(sid)) return { ok: false, ms: 0 };
+    const ev = await this.S(sid).asker.ask('save-all flush', (e) => e.type === 'saved', 10000, true);
+    return { ok: !!ev, ms: Date.now() - t0 };
+  }
+
   async scanNow(sid) {
     // the server only writes player data every few minutes; ask it to save so the check sees the current state
-    if (this.isOnline(sid)) { try { await this.local.stdin(sid, 'save-all flush'); await new Promise((r) => setTimeout(r, 1500)); } catch { /* not running */ } }
+    await this.saveNow(sid);
     const items_ = this.scanItems(sid, { force: true });
     const xray_ = this.scanXray(sid, { force: true });
     const allow_ = await this.scanAllow(sid);
@@ -483,6 +537,18 @@ class Anticheat {
       if (t - (S.gcAt || 0) > 60000) { S.gcAt = t; S.rates.gc(t, 24 * 3600 * 1000); for (const [ip, m] of S.ipNames) { for (const [n, ts] of m) if (t - ts > 24 * 3600 * 1000) m.delete(n); if (!m.size) S.ipNames.delete(ip); } }
     }
   }
+
+  // ---- self-test (started by an admin, runs on the real server) -----------------------------------------------
+  startSelfTest(sid, player) {
+    const S = this.S(sid);
+    if (S.selftest && S.selftest.running) throw Object.assign(new Error('Der Selbsttest läuft schon.'), { status: 409 });
+    const state = { running: true, player: String(player), startedAt: Date.now(), finishedAt: 0, steps: [], summary: null };
+    S.selftest = state;
+    new SelfTest(this, sid, String(player), state).run().catch((e) => { state.steps.push({ name: 'Unerwarteter Fehler', status: 'fail', ms: 0, detail: e.message }); state.running = false; });
+    return state;
+  }
+
+  selfTestState(sid) { return this.S(sid).selftest || null; }
 
   // ---- manual actions (only ever started by an admin) ---------------------------------------------------------
   async act(sid, id, action, text) {
@@ -525,7 +591,7 @@ class Anticheat {
     for (const n of this.onlineNames(sid)) if (!names.has(lc(n))) names.set(lc(n), { name: n, score: 0, open: 0, total: 0, last: 0, level: 'ok' });
     const players = [...names.values()].map((e) => ({ ...e, online: online.has(lc(e.name)), exempt: this.exempt(sid, e.name), op: ops.has(lc(e.name)) }))
       .sort((a, b) => b.score - a.score || (b.online ? 1 : 0) - (a.online ? 1 : 0) || a.name.localeCompare(b.name));
-    const flags = [...store.flags].sort((a, b) => b.last - a.last).slice(0, 600);
+    const flags = store.flags.filter((f) => !f.selftest).sort((a, b) => b.last - a.last).slice(0, 600);
     return {
       available: true, config: store.config, defaults: DEFAULTS, running: this.isOnline(sid), counts: store.openCount(), players, flags,
       status: { lastPoll: S.lastPoll, polledPlayers: S.lastRoundPlayers, roundMs: S.lastRoundMs, queries: S.asker.sent, lastFiles: S.lastFiles, lastAllow: S.lastAllow },

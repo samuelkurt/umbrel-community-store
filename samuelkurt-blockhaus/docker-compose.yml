@@ -26,7 +26,8 @@ services:
       # It only serves published pack files and forwards Minecraft traffic to Crafty.
       - "25700:25700"
     volumes:
-      # The panel's own code (copied here from the store when the app is installed).
+      # The panel's own code. umbrelOS does NOT copy src/ when the app is updated, so hooks/pre-start unpacks it from
+      # hooks/blockhaus-src.tar.gz before every start (hooks/ is copied on updates). Do not edit it by hand.
       - ${APP_DATA_DIR}/src:/app:ro
       # Settings (Crafty URL, token, addresses). Written as root, mode 600.
       - ${APP_DATA_DIR}/data:/data

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Runs on the host before every start of the app (Umbrel: hooks/pre-start).
+#
+# Why this exists: when an app is UPDATED, umbrelOS copies only docker-compose.yml, hooks/ and umbrel-app.yml from the store
+# into ~/umbrel/app-data/<app>/. The panel's code folder (src/) is NOT copied again, so it stays at the version that was
+# installed first. The hooks/ folder is copied, so the code travels in hooks/blockhaus-src.tar.gz and is unpacked into
+# src/ here, on every start. Never edit src/ by hand: it is replaced.
+set -euo pipefail
+
+HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(dirname "${HOOKS_DIR}")"
+TARBALL="${HOOKS_DIR}/blockhaus-src.tar.gz"
+DEST="${APP_DIR}/src"
+TMP="${APP_DIR}/.src-unpack.$$"
+
+if [[ ! -f "${TARBALL}" ]]; then
+  echo "Blockhaus: ${TARBALL} fehlt. Der Programmcode wurde nicht aktualisiert." >&2
+  exit 1
+fi
+
+trap 'rm -rf "${TMP}"' EXIT
+rm -rf "${TMP}"
+mkdir -p "${TMP}"
+tar -xzf "${TARBALL}" -C "${TMP}"
+if [[ ! -f "${TMP}/server.js" ]]; then
+  echo "Blockhaus: Das Archiv enthält keine server.js. Der Programmcode wurde nicht aktualisiert." >&2
+  exit 1
+fi
+
+mkdir -p "${DEST}"
+# Same folder, new content (the container mounts it read-only; rsync keeps files that did not change).
+if command -v rsync >/dev/null 2>&1; then
+  rsync --archive --delete "${TMP}/" "${DEST}/"
+else
+  find "${DEST}" -mindepth 1 -delete
+  cp --archive "${TMP}/." "${DEST}/"
+fi
+chmod -R a+rX "${DEST}"
+
+VERSION="$(sed -n "s/^const VERSION = '\\(.*\\)';.*/\\1/p" "${DEST}/server.js" | head -n 1)"
+echo "Blockhaus: Programmcode ist jetzt Version ${VERSION:-unbekannt}."

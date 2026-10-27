@@ -24,24 +24,50 @@ function slotSpec(container, slot) {
 const cleanText = (t, fallback) => String(t || fallback || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 120) || String(fallback || '');
 const idOf = (v) => String(v || '').replace(/^"|"$/g, '').replace(/^minecraft:/, '');
 
-/** Removes the stack a flag is about, after checking that the same item is still in that slot. Keeps a copy of it in the flag. */
+// an admin waits for these answers: ahead of the routine polling, and patient with a busy server
+const Q = { priority: true, timeout: 8000 };
+
+/** Empties one slot after checking that the expected item still lies there. Throws err(409, …, moved) if it does not. */
+async function removeSlot(ac, sid, name, container, slot, want) {
+  let spec;
+  try { spec = slotSpec(container, slot); } catch (e) { e.moved = true; throw e; }
+  const idq = await ac.query(sid, name, spec.path + '.id', Q);
+  if (!idq) throw err(504, 'Der Server hat nicht rechtzeitig geantwortet (nach 8 s). Ist er überlastet? Versuche es noch einmal.');
+  if (idq.offline) throw err(409, `${name} ist nicht online.`);
+  const gone = idq.none ? null : idOf(idq.value);
+  if (gone !== want) throw Object.assign(err(409, gone ? `Dort liegt jetzt ${gone} statt ${want}.` : 'Dort liegt nichts mehr.'), { moved: true });
+  const full = await ac.query(sid, name, spec.path, Q);
+  const backup = full && full.value ? String(full.value).slice(0, 6000) : null;
+  await ac.replaceSlot(sid, name, spec.cmd, 'minecraft:air');
+  const after = await ac.query(sid, name, spec.path + '.id', Q);
+  if (!after) throw err(504, 'Der Server hat nach dem Entfernen nicht rechtzeitig geantwortet; ob der Platz leer ist, ist unbekannt. Prüfe das Inventar.');
+  if (!after.none) throw err(502, 'Der Server hat das Item nicht entfernt (Platz ist nicht leer geworden). Prüfe die Konsole.');
+  return { note: `${want} aus ${container === 'ender' ? 'Endertruhe' : 'Inventar'} Platz ${slot} entfernt`, backup };
+}
+
+/**
+ * Removes the stack a flag is about, after checking that the same item is still in that slot. Keeps a copy of it in the flag.
+ * The flag was made from a file that may be minutes old, so the player may have moved the item since: then the whole
+ * inventory, ender chest and equipment are asked for the same item (same kind of finding) and those stacks are removed.
+ */
 async function removeItem(ac, sid, flag) {
   const ev = flag.evidence || {};
   const name = flag.player;
   if (!NAME_RE.test(name || '') || ev.nameKnown === false) throw err(409, 'Der Spielername ist nicht sicher bekannt (nur die ID). Nutze die Spielerliste.');
-  const spec = slotSpec(ev.container, ev.slot);
   const want = idOf(ev.topId);
-  const idq = await ac.query(sid, name, spec.path + '.id');
-  if (!idq) throw err(504, 'Der Server hat nicht geantwortet.');
-  if (idq.offline) throw err(409, `${name} ist nicht online.`);
-  if (idq.none) throw err(409, 'Dort liegt nichts mehr. Der Spieler hat das Item schon bewegt; prüfe neu.');
-  if (idOf(idq.value) !== want) throw err(409, `Dort liegt jetzt ${idOf(idq.value)} statt ${want}. Nichts wurde entfernt; prüfe neu.`);
-  const full = await ac.query(sid, name, spec.path);
-  const backup = full && full.value ? String(full.value).slice(0, 6000) : null;
-  await ac.local.stdin(sid, `item replace entity ${name} ${spec.cmd} with minecraft:air`);
-  const after = await ac.query(sid, name, spec.path + '.id');
-  if (!after || !after.none) throw err(502, 'Der Server hat das Item nicht entfernt (Platz ist nicht leer geworden). Prüfe die Konsole.');
-  return { note: `${want} aus ${ev.container === 'ender' ? 'Endertruhe' : 'Inventar'} Platz ${ev.slot} entfernt`, backup };
+  try { return await removeSlot(ac, sid, name, ev.container, ev.slot, want); } catch (e) { if (!e.moved) throw e; }
+  const live = await ac.liveFindings(sid, name);
+  if (!live) throw err(504, 'Der Server hat nicht rechtzeitig geantwortet (nach 8 s). Ist er überlastet? Versuche es noch einmal.');
+  const seen = new Set();
+  const cands = live.findings.filter((f) => f.type === flag.type && idOf(f.evidence.item) === idOf(ev.item) && idOf(f.evidence.topId) === want && (f.evidence.enchant || null) === (ev.enchant || null))
+    .filter((f) => { const k = `${f.evidence.container}:${f.evidence.slot}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  if (!cands.length) throw err(409, `${ev.item || want} ist nicht mehr beim Spieler (weder Inventar noch Endertruhe noch Ausrüstung). Es gibt nichts zu entfernen.`);
+  const notes = []; const backups = [];
+  for (const c of cands) {
+    const r = await removeSlot(ac, sid, name, c.evidence.container, c.evidence.slot, idOf(c.evidence.topId));
+    notes.push(r.note); if (r.backup) backups.push(r.backup);
+  }
+  return { note: `${notes.join('; ')} (der Spieler hatte es verschoben)`, backup: backups.join('\n') || null, relocated: true };
 }
 
 /** @returns {Promise<{message:string, note:string, backup?:string, restartNeeded?:boolean}>} */
@@ -109,4 +135,4 @@ async function act(ac, sid, flag, action, text) {
   }
 }
 
-module.exports = { act, removeItem, slotSpec, ITEM_TYPES };
+module.exports = { act, removeItem, removeSlot, slotSpec, ITEM_TYPES };

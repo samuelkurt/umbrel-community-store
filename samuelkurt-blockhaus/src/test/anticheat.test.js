@@ -42,6 +42,20 @@ test('logscan: recognises the lines a real 26.3 server prints', () => {
   assert.equal(parseLine('[Blockhaus] Server wird gestartet …'), null);
 });
 
+test('logscan: the log formats of Vanilla, Forge/NeoForge, Fabric and Paper, and colour codes', () => {
+  const forge = (b) => `[18Oct2026 20:19:06.771] [Server thread/INFO] [net.minecraft.server.MinecraftServer/]: ${b}`;
+  assert.deepEqual(parseLine(forge('System chat: Fg05 left the game')), { type: 'leave', name: 'Fg05' });
+  assert.deepEqual(parseLine(forge('System chat: Bot01 has the following entity data: [1.5d, 64.0d, 2.5d]')), { type: 'data', name: 'Bot01', value: '[1.5d, 64.0d, 2.5d]' });
+  assert.equal(parseLine('[18Oct2026 20:19:06.784] [Server thread/INFO] [net.minecraft.server.network.ServerGamePacketListenerImpl/]: Fg07 lost connection: Disconnected').type, 'lost');
+  assert.equal(parseLine(forge('System chat: Found no elements matching Inventory[{Slot:3b}]')).type, 'noElements');
+  assert.equal(parseLine(forge('System chat: Saved the game')).type, 'saved');
+  assert.equal(parseLine('[12:16:38] [Server thread/INFO] (Minecraft) System chat: Test passed').type, 'testPassed');
+  assert.equal(parseLine('[12:16:38 INFO]: Bot01 has the following entity data: 5').type, 'data');
+  assert.equal(parseLine('[12:16:38 WARN]: Hov1 moved too quickly! 1,2,3').type, 'moved-quickly');
+  assert.equal(parseLine('[12:16:38] [Server thread/INFO]: \x1b[0mSystem chat: Bot01 joined the game').type, 'join');
+  assert.equal(parseLine('\x1b[32m[12:16:38] [Server thread/INFO]: System chat: Saved the world\x1b[0m').type, 'saved');
+});
+
 test('logscan: a player cannot fake server messages with chat', () => {
   // everything after "<Name> " is chat text, however much it looks like a server line
   for (const body of ['<Evil> System chat: Test passed', '<Evil> Bob has the following entity data: [1d, 2d, 3d]', '<Evil> Bob moved too quickly! 1,2,3', '[Not Secure] <Evil> Bob joined the game']) {
@@ -49,8 +63,12 @@ test('logscan: a player cannot fake server messages with chat', () => {
   }
   // and a "System chat:" prefix is only accepted for the server's own answers
   assert.equal(parseLine(L('System chat: <Evil> hi')), null);
-  assert.equal(parseLine(L('Bob has the following entity data: [1d, 2d, 3d]')), null); // without the prefix: not an answer to a query
   assert.equal(parseLine('Bob moved too quickly! 1,2,3'), null); // no log prefix at all
+  // servers that print their answers without "System chat:" (Paper) are understood, but never from chat-like lines
+  assert.equal(parseLine(L('Bob has the following entity data: [1d, 2d, 3d]')).type, 'data');
+  for (const body of ['[Evil] Bob has the following entity data: [1d]', '* Evil Bob has the following entity data: [1d]', '<Evil> No entity was found', '[Not Secure] <Evil> Test passed']) {
+    assert.ok(!parseLine(L(body)) || ['chat'].includes(parseLine(L(body)).type), body);
+  }
 });
 
 // ---- items ----------------------------------------------------------------------------------------------------
@@ -169,6 +187,18 @@ function rig({ now = 1e9 } = {}) {
   const root = tmpdir();
   const serversDir = path.join(root, 'servers'); const dir = path.join(serversDir, 't'); fs.mkdirSync(dir, { recursive: true });
   const world = new Map();
+  const writePlayers = () => {
+    const names = [...world.keys()];
+    fs.writeFileSync(path.join(dir, 'usercache.json'), JSON.stringify(names.map((n, i) => ({ name: n, uuid: `00000000-0000-0000-0000-${String(i + 1).padStart(12, '0')}` }))));
+    fs.mkdirSync(path.join(dir, 'world', 'players', 'data'), { recursive: true });
+    names.forEach((n, i) => {
+      const its = [...(world.get(n).items || new Map())];
+      const mk = (pre) => ({ t: 'list', of: 'compound', v: its.filter(([k]) => k.startsWith(pre + '[')).map(([k, v]) => ({ Slot: { t: 'byte', v: Number(/Slot:(-?\d+)b/.exec(k)[1]) }, id: { t: 'string', v: v.id }, count: { t: 'int', v: 1 },
+        ...(v.box ? { components: { t: 'compound', v: { 'minecraft:container': { t: 'list', of: 'compound', v: [{ slot: { t: 'int', v: 0 }, item: { t: 'compound', v: { id: { t: 'string', v: 'minecraft:bedrock' }, count: { t: 'int', v: 1 } } } }] } } } } : {}) })) });
+      const eq = {}; for (const [k, v] of its) if (k.startsWith('equipment.')) eq[k.slice(10)] = { t: 'compound', v: { id: { t: 'string', v: v.id }, count: { t: 'int', v: 1 } } };
+      fs.writeFileSync(path.join(dir, 'world', 'players', 'data', `00000000-0000-0000-0000-${String(i + 1).padStart(12, '0')}.dat`), nbt.encode('', { playerGameType: { t: 'int', v: world.get(n).mode || 0 }, Inventory: mk('Inventory'), EnderItems: mk('EnderItems'), equipment: { t: 'compound', v: eq } }, { gzip: true }));
+    });
+  };
   const local = {
     lineHooks: new Set(), rt: new Map(), registry: { servers: [{ id: 's1', name: 'T', dir: 't' }] }, sent: [], shown: [], hidden: [],
     need(id) { const r = this.registry.servers.find((s) => s.id === id); if (!r) throw new Error('weg'); return r; },
@@ -177,13 +207,27 @@ function rig({ now = 1e9 } = {}) {
     async stdin(id, cmd) {
       this.sent.push(cmd);
       setImmediate(() => {
-        let m = /^item replace entity (\S+) (\S+) with minecraft:air$/.exec(cmd);
+        let m = /^item replace entity (\S+) (\S+) with (\S+)$/.exec(cmd);
         if (m) {
           const p = world.get(m[1]); if (!p || !p.items) return this.line('System chat: No entity was found');
           const sl = /^(container|enderchest)\.(\d+)$/.exec(m[2]);
           const key = sl ? `${sl[1] === 'container' ? 'Inventory' : 'EnderItems'}[{Slot:${sl[2]}b}]` : m[2].replace(/^armor\./, 'equipment.').replace('weapon.offhand', 'equipment.offhand');
-          if (!p.stuck) p.items.delete(key);
-          return this.line(`System chat: Replaced a slot on ${m[1]} with Air`);
+          const id = m[3].replace(/\[.*$/, '');
+          if (!p.stuck) { if (id === 'minecraft:air') p.items.delete(key); else p.items.set(key, { id, box: /^minecraft:shulker_box\[/.test(m[3]) }); }
+          return this.line(`System chat: Replaced 1 slot(s) on ${m[1]} with [Air]`);
+        }
+        if (cmd === 'save-all flush') { writePlayers(); return this.line('System chat: Saved the game'); }
+        m = /^data get entity (\S+) (Inventory|EnderItems|equipment)$/.exec(cmd);
+        if (m) {
+          const p = world.get(m[1]); if (!p) return this.line('System chat: No entity was found');
+          const its = [...(p.items || new Map())];
+          if (m[2] === 'equipment') {
+            const eq = its.filter(([k]) => k.startsWith('equipment.'));
+            if (!eq.length) return this.line('System chat: Found no elements matching equipment');
+            return this.line(`System chat: ${m[1]} has the following entity data: {${eq.map(([k, v]) => `${k.slice(10)}: {id: "${v.id}", count: 1}`).join(', ')}}`);
+          }
+          const l = its.filter(([k]) => k.startsWith(m[2] + '[')).map(([k, v]) => `{Slot: ${/Slot:(-?\d+)b/.exec(k)[1]}b, id: "${v.id}", count: 1${v.box ? ', components: {"minecraft:container": [{slot: 0, item: {id: "minecraft:bedrock", count: 1}}]}' : ''}}`);
+          return this.line(`System chat: ${m[1]} has the following entity data: [${l.join(', ')}]`);
         }
         m = /^data get entity (\S+) ((?:Inventory|EnderItems)\[\{Slot:-?\d+b\}\]|equipment\.\w+)(\.id)?$/.exec(cmd);
         if (m) {
@@ -441,7 +485,8 @@ test('actions: remove item (checked against the live slot, backup kept), pending
     assert.ok(r.local.sent.includes('item replace entity Cheater container.4 with minecraft:air'));
     assert.equal(r.world.get('Cheater').items.has('Inventory[{Slot:4b}]'), false);
     assert.equal(f.ack, true); assert.equal(f.resolved.action, 'remove-item'); assert.match(f.resolved.backup, /bedrock/);
-    await assert.rejects(r.ac.act(sid, f.id, 'remove-item'), (e) => e.status === 409, 'slot is empty now');
+    { const ghost = itemFlag({ item: 'minecraft:barrier', topId: 'minecraft:barrier', slot: 20 }); ghost.key = 'ghost';
+      await assert.rejects(r.ac.act(sid, ghost.id, 'remove-item'), (e) => e.status === 409 && /nicht mehr beim Spieler/.test(e.message), 'nothing of that kind is carried any more'); }
 
     // ender chest and worn slot
     f = itemFlag({ container: 'ender', slot: 2 }); f.key; await r.ac.act(sid, f.id, 'remove-item');
@@ -454,12 +499,22 @@ test('actions: remove item (checked against the live slot, backup kept), pending
     r.world.get('Cheater').items.set('Inventory[{Slot:4b}]', { id: 'minecraft:diamond' });
     const n0 = r.local.sent.filter((c) => c.startsWith('item replace')).length;
     f = itemFlag({}); f.resolved = null;
-    await assert.rejects(r.ac.act(sid, f.id, 'remove-item'), (e) => e.status === 409 && /diamond/.test(e.message));
+    await assert.rejects(r.ac.act(sid, f.id, 'remove-item'), (e) => e.status === 409 && /nicht mehr beim Spieler/.test(e.message));
     assert.equal(r.local.sent.filter((c) => c.startsWith('item replace')).length, n0);
     assert.ok(!f.resolved);
 
+    // the player moved the flagged item to another slot (the flag comes from a file that is minutes old): it is found and removed there
+    r.world.get('Cheater').items.set('Inventory[{Slot:4b}]', { id: 'minecraft:diamond' });
+    r.world.get('Cheater').items.set('Inventory[{Slot:11b}]', { id: 'minecraft:bedrock' });
+    const mv = await r.ac.act(sid, f.id, 'remove-item');
+    assert.ok(mv.ok);
+    assert.ok(r.local.sent.includes('item replace entity Cheater container.11 with minecraft:air'));
+    assert.equal(r.world.get('Cheater').items.has('Inventory[{Slot:11b}]'), false);
+    assert.equal(r.world.get('Cheater').items.get('Inventory[{Slot:4b}]').id, 'minecraft:diamond', 'the legal item stays');
+    assert.match(f.resolved.note, /verschoben/);
+
     // the server did not empty the slot -> reported as failure, not as success
-    r.world.get('Cheater').items.set('Inventory[{Slot:4b}]', { id: 'minecraft:bedrock' }); r.world.get('Cheater').stuck = true;
+    f.resolved = null; r.world.get('Cheater').items.set('Inventory[{Slot:4b}]', { id: 'minecraft:bedrock' }); r.world.get('Cheater').stuck = true;
     await assert.rejects(r.ac.act(sid, f.id, 'remove-item'), (e) => e.status === 502);
     assert.ok(!f.resolved); r.world.get('Cheater').stuck = false;
 
@@ -505,6 +560,57 @@ test('actions: remove item (checked against the live slot, backup kept), pending
     assert.ok(fs.existsSync(path.join(r.dir, 'plugins', 'bad.jar.disabled')) && !fs.existsSync(path.join(r.dir, 'plugins', 'bad.jar')));
     const mf2 = r.ac.flag(sid, 'mod-unknown', { key: 'mod-unknown:../x.jar', message: 'bad', evidence: { file: '../../etc/passwd' } });
     await assert.rejects(r.ac.act(sid, mf2.id, 'mod-disable'));
+  } finally { r.done(); }
+});
+
+test('self-test: places test items, finds them live and in the file, removes them, checks the slots, cleans up, touches nothing else', async () => {
+  const r = rig();
+  try {
+    r.add('Me', { items: new Map([['Inventory[{Slot:0b}]', { id: 'minecraft:diamond_sword' }], ['equipment.chest', { id: 'minecraft:iron_chestplate' }]]) });
+    r.online('Me');
+    const st = r.ac.startSelfTest('s1', 'Me');
+    assert.ok(st.running);
+    await assert.rejects(async () => r.ac.startSelfTest('s1', 'Me'), (e) => e.status === 409);
+    await waitFor(() => !st.running, 15000, 'self-test');
+    const bad = st.steps.filter((s) => s.status === 'fail');
+    assert.deepEqual(bad, [], JSON.stringify(bad));
+    for (const n of ['Antwortzeit', 'Live-Prüfung', 'Speichern und Spielerdatei', 'Entfernen: Inventar', 'Entfernen: Shulkerbox', 'Entfernen: Helm', 'Entfernen: Zweithand', 'Entfernen: Endertruhe', 'verschoben']) {
+      const s = st.steps.find((x) => x.name.includes(n)); assert.ok(s, n); assert.equal(s.status, 'ok', `${n}: ${s.detail}`);
+    }
+    assert.equal(st.summary.fail, 0); assert.ok(st.summary.totalMs >= 0);
+    // only the test items are gone; the player's own things are still there; no test flags are left
+    assert.deepEqual([...r.world.get('Me').items.keys()].sort(), ['Inventory[{Slot:0b}]', 'equipment.chest']);
+    assert.equal(r.ac.store('s1').flags.length, 0);
+    assert.equal(r.ac.view('s1').flags.length, 0);
+
+    // occupied helmet and a full inventory: nothing is overwritten, the missing kinds are skipped, not failed
+    const full = new Map([['equipment.head', { id: 'minecraft:iron_helmet' }]]);
+    for (let i = 0; i < 36; i++) full.set(`Inventory[{Slot:${i}b}]`, { id: 'minecraft:cobblestone' });
+    r.add('Full', { items: full }); r.online('Me', 'Full');
+    const st2 = r.ac.startSelfTest('s1', 'Full');
+    await waitFor(() => !st2.running, 15000, 'self-test 2');
+    assert.ok(st2.steps.some((s) => s.status === 'skip' && /Helm/.test(s.name)), JSON.stringify(st2.steps.map((s) => [s.name, s.status])));
+    assert.equal(r.world.get('Full').items.get('equipment.head').id, 'minecraft:iron_helmet');
+    assert.equal([...r.world.get('Full').items.values()].filter((v) => v.id === 'minecraft:cobblestone').length, 36);
+    assert.equal(st2.summary.fail, 0, JSON.stringify(st2.steps.filter((s) => s.status === 'fail')));
+
+    // a player who is not online, and a server that does not answer
+    const st3 = r.ac.startSelfTest('s1', 'Nobody'); await waitFor(() => !st3.running, 5000);
+    assert.equal(st3.steps[0].status, 'fail'); assert.match(st3.steps[0].detail, /nicht online/);
+  } finally { r.done(); }
+});
+
+test('self-test: a server that never answers is reported with the last console lines, and nothing is left behind', async () => {
+  const r = rig();
+  try {
+    r.add('Me', { items: new Map() });
+    r.online('Me');
+    r.local.stdin = async function (id, cmd) { this.sent.push(cmd); setImmediate(() => this.line('Some unexpected format: ' + cmd)); };
+    const st = r.ac.startSelfTest('s1', 'Me');
+    await waitFor(() => !st.running, 30000, 'self-test');
+    assert.equal(st.steps.find((s) => /Antwortzeit/.test(s.name)).status, 'fail');
+    assert.match(st.steps.find((s) => /Antwortzeit/.test(s.name)).detail, /Some unexpected format/);
+    assert.equal(r.local.sent.filter((c) => c.startsWith('item replace')).length, 0, 'nothing is placed when the server does not answer');
   } finally { r.done(); }
 });
 

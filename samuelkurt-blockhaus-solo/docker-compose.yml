@@ -36,7 +36,8 @@ services:
       # Texture-pack download (see README). Not behind the Umbrel login on purpose.
       - "25701:25701"
     volumes:
-      # The panel's own code (copied here from the store when the app is installed).
+      # The panel's own code. umbrelOS does NOT copy src/ when the app is updated, so hooks/pre-start unpacks it from
+      # hooks/blockhaus-src.tar.gz before every start (hooks/ is copied on updates). Do not edit it by hand.
       - ${APP_DATA_DIR}/src:/app:ro
       # Settings, downloaded Java, server list.
       - ${APP_DATA_DIR}/data:/data

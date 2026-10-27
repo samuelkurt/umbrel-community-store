@@ -7,7 +7,18 @@
 // Anything that is not recognised returns null. Chat text is only ever looked at behind "<Name> ", so a player cannot
 // type something that looks like a server message.
 const N = '([A-Za-z0-9_.]{1,16})';
-const PREFIX = /^\[[^\]]*\] \[[^\]]*\]: /;
+// Log line prefixes of the servers Blockhaus can start (checked against real 26.3 logs of Vanilla and Forge):
+//   [12:16:38] [Server thread/INFO]: text                                                    Vanilla, Fabric, Paper
+//   [18Oct2026 20:19:06.771] [Server thread/INFO] [net.minecraft.server.MinecraftServer/]: text   Forge, NeoForge
+//   [12:16:38] [Server thread/INFO] (Minecraft) text                                         Fabric/Quilt with logger name
+//   [12:16:38 INFO]: text                                                                    older Spigot/Paper
+const PREFIXES = [
+  /^\[[^\]]*\] \[[^\]]*\](?: \[[^\]]*\])?: /,
+  /^\[[^\]]*\] \[[^\]]*\] \([^)]*\) /,
+  /^\[\d\d:\d\d:\d\d(?:\.\d+)? (?:INFO|WARN|WARNING|ERROR|DEBUG)\]: /,
+];
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
 const RULES = [
   // [regex, build(match) -> event]; "sys" rules only apply to lines the server itself printed
@@ -28,18 +39,26 @@ const RULES = [
   [/^Found no elements matching (.+)$/, 'noElements', (m) => ({ path: m[1] }), true],
   [/^Test passed$/, 'testPassed', () => ({}), true],
   [/^Test failed/, 'testFailed', () => ({}), true],
+  [/^Saved the (?:game|world)$/, 'saved', () => ({}), true],
+  [/^Replaced (\d+) slots?\b/, 'replaced', (m) => ({ count: Number(m[1]) }), true],
 ];
 
 /** @returns {{type:string, [k:string]:any}|null} */
 function parseLine(line) {
-  const p = PREFIX.exec(line);
+  line = String(line).replace(ANSI, '');
+  let p = null;
+  for (const re of PREFIXES) { p = re.exec(line); if (p) break; }
   if (!p) return null;
   let t = line.slice(p[0].length);
   let sys = false;
   if (t.startsWith('System chat: ')) { t = t.slice(13); sys = true; }
+  // Chat and /say lines start with "<", "[Not Secure] <", "[" or "*": whatever a player typed is behind that, so it can never
+  // be taken for the server's own answer, even on servers that print answers without the "System chat:" prefix (Paper).
+  const chatLike = /^(?:[<\[*])/.test(t);
   for (const [re, type, build, sysOnly] of RULES) {
-    // "System chat:" lines are the server's own answers and system messages; the others are plain log lines. Never mix them.
-    if (sys !== !!sysOnly && !(type === 'join' || type === 'leave')) continue;
+    // "System chat:" lines are the server's own answers and system messages; the others are plain log lines.
+    if (sysOnly) { if (!sys && chatLike) continue; }
+    else if (sys && !(type === 'join' || type === 'leave')) continue;
     const m = re.exec(t);
     if (m) return { type, ...build(m) };
   }

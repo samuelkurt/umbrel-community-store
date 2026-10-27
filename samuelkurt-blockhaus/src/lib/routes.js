@@ -362,6 +362,16 @@ async function handle(c) {
       const n = ac.store(sid).clear({ all: b.all === true, acked: b.acked === true, player: b.player === undefined ? undefined : String(b.player) });
       return send(res, 200, { ok: true, removed: n }), true;
     }
+    if (rest === 'anticheat/selftest') {
+      if (m === 'GET') return send(res, 200, { state: ac.selfTestState(sid) }), true;
+      if (m === 'POST') {
+        const b = await readJson(req);
+        const player = String(b.player || '');
+        if (!/^[A-Za-z0-9_.]{1,16}$/.test(player)) throw new HttpError(400, 'Bitte einen Spieler wählen.');
+        try { return send(res, 200, { ok: true, state: ac.startSelfTest(sid, player) }), true; }
+        catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw e; }
+      }
+    }
     if (m === 'POST' && rest === 'anticheat/act') {
       const b = await readJson(req);
       try { return send(res, 200, await ac.act(sid, String(b.id || ''), String(b.action || ''), b.text === undefined ? '' : String(b.text))), true; }

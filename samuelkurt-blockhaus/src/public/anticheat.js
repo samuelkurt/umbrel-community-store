@@ -90,6 +90,59 @@ async function page(token) {
   }
   const mut = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
+  // ---- self-test: runs on the real server with a player you pick
+  const ST_ICON = { ok: '✓', warn: '⚠', fail: '✗', skip: '–', run: '…' };
+  const stBox = h('div', {});
+  const pick = h('select', { 'aria-label': 'Spieler für den Selbsttest', style: 'width:auto;min-width:160px' });
+  let stState = null; let stBusy = false; let runningShown = d.running;
+  const lastPlayer = () => { try { return localStorage.getItem('bh-ac-selftest-player') || ''; } catch { return ''; } };
+  function fillPick() {
+    const names = d.players.filter((p) => p.online).map((p) => p.name);
+    const want = pick.value || lastPlayer();
+    const have = [...pick.options].map((o) => o.value).join('|');
+    if (have === (names.length ? names : ['']).join('|')) return false;
+    pick.replaceChildren(...(names.length ? names : ['']).map((n) => h('option', { value: n }, n || '(niemand online)')));
+    if (names.includes(want)) pick.value = want;
+    return true;
+  }
+  async function stPoll() {
+    for (;;) {
+      if (token !== getToken()) return;
+      const r = await api('GET', A + '/selftest');
+      stState = r.state; paintSelfTest();
+      if (!stState || !stState.running) { stBusy = false; paintSelfTest(); return; }
+      await new Promise((res) => setTimeout(res, 800));
+    }
+  }
+  async function stStart() {
+    const who = pick.value;
+    if (!who) { toast('Es ist niemand online. Tritt dem Server bei und wähle dich aus.', true); return; }
+    if (!confirm(`Selbsttest mit „${who}“ starten?\n\nIn leere Plätze von ${who} werden kurz Testitems gelegt (Bedrock, eine Shulkerbox mit Bedrock, ein Barrier-Block als Helm, ein Befehlsblock in der Zweithand, ein Strukturblock in der Endertruhe). Blockhaus findet sie, entfernt sie wieder und räumt auf. Belegte Plätze werden nie angefasst. Dauer: etwa 10 bis 30 Sekunden.`)) return;
+    try { localStorage.setItem('bh-ac-selftest-player', who); } catch { /* optional */ }
+    stBusy = true;
+    const r = await api('POST', A + '/selftest', { player: who });
+    stState = r.state; paintSelfTest();
+    stPoll().catch((e) => { stBusy = false; toast(e.message, true); });
+  }
+  function paintSelfTest() {
+    const st = stState; const running = !!(st && st.running);
+    const sum = st && st.summary;
+    put(stBox, h('div', { class: 'card', id: 'ac-selftest' },
+      h('h2', { style: 'margin-top:0' }, 'Selbsttest'),
+      h('p', { class: 'small muted' }, 'Prüft auf dem echten Server mit einem Spieler deiner Wahl, ob Erkennen und Entfernen wirklich funktionieren, und misst, wie lange der Server für Antworten braucht. Starte ihn am besten im Überlebensmodus; für Operatoren und im Kreativmodus meldet der Anticheat im Normalbetrieb keine Items (der Test sagt dir das).'),
+      h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;align-items:center' },
+        h('span', {}, 'Spieler:'), pick,
+        h('button', { class: 'primary', disabled: running || stBusy || !d.running, onclick: mut(stStart) }, running ? 'Läuft …' : 'Selbsttest starten'),
+        !d.running ? h('span', { class: 'small muted' }, 'Der Server läuft nicht.') : null),
+      st ? h('div', { style: 'margin-top:12px' },
+        h('p', { class: 'small' }, `Spieler ${st.player}, gestartet ${when(st.startedAt)}`, running ? ' …' : ''),
+        h('ul', { class: 'plist' }, st.steps.map((x) => h('li', {},
+          h('span', { class: 'chip ' + (x.status === 'ok' ? 'on' : x.status === 'fail' ? 'err' : x.status === 'warn' ? 'warn' : '') , style: 'min-width:2em;text-align:center' }, ST_ICON[x.status] || '?'),
+          h('div', { class: 'nm' }, h('b', {}, x.name), x.status === 'run' ? '' : ` (${x.ms} ms)`, x.detail ? h('small', {}, x.detail) : null)))),
+        sum ? h('div', { class: 'notice ' + (sum.fail ? 'err' : sum.warn ? 'warn' : 'ok') },
+          h('span', {}, h('b', {}, sum.fail ? `${sum.fail} Schritt(e) fehlgeschlagen` : sum.warn ? 'Bestanden, mit Hinweisen' : 'Alles bestanden'), ` – ${sum.ok} in Ordnung, ${sum.warn} Hinweise, ${sum.fail} Fehler, ${sum.skip} übersprungen. Gesamtdauer ${(sum.totalMs / 1000).toFixed(1)} s.`)) : null) : null));
+  }
+
   const bannerBox = h('div', {});
   const playersBox = h('div', {});
   const flagsBox = h('div', {});
@@ -100,6 +153,7 @@ async function page(token) {
     d = await api('GET', A);
     if (token !== getToken()) return;
     paintBanner(); paintPlayers(); paintFlags();
+    if (!stBusy && (fillPick() || runningShown !== d.running)) { runningShown = d.running; paintSelfTest(); }
     window.BH.refreshAnticheatBadge && window.BH.refreshAnticheatBadge();
   }
 
@@ -230,9 +284,10 @@ async function page(token) {
     h('p', { class: 'small' }, h('b', {}, 'Server-Log: '), 'Die Positionsabfragen schreiben pro Spieler und Runde drei Zeilen (bei Verdacht mehr) in die Server-Datei latest.log. Sie fehlen in der Konsolen-Ansicht von Blockhaus, nicht aber in der Datei. Wer das nicht möchte, schaltet „Geschwindigkeit“ und „Fliegen“ aus; alle anderen Prüfungen fragen nichts ab.'));
 
   put(main, header('Anticheat', 'Beobachtet und meldet. Es kickt, bannt oder warnt niemanden automatisch; Maßnahmen löst nur du per Knopf aus.'),
-    bannerBox, playersBox, flagsBox, settingsBox, allowBox, limits, saveBox);
-  paintBanner(); paintPlayers(); paintFlags(); paintSettings(); paintSave(); paintAllow();
+    bannerBox, stBox, playersBox, flagsBox, settingsBox, allowBox, limits, saveBox);
+  fillPick(); paintBanner(); paintPlayers(); paintFlags(); paintSettings(); paintSave(); paintAllow(); paintSelfTest();
   loadAllow();
+  api('GET', A + '/selftest').then((r) => { stState = r.state; paintSelfTest(); if (stState && stState.running) { stBusy = true; stPoll().catch(() => {}); } }).catch(() => {});
   every(() => { if (!document.hidden) reload().catch(() => {}); }, 6000);
 }
 

@@ -64,6 +64,7 @@ process.stdin.on('data', (c) => {
       setTimeout(() => process.exit(0), Number(read('slow-exit', '30')));
     } else if (cmd === 'crash') { log('Encountered an unexpected exception', 'ERROR'); process.exit(3); }
     else if (cmd.startsWith('join ')) { const n = cmd.slice(5); players.add(n); log(`${n} joined the game`); }
+    else if (cmd === 'save-all flush') { log('System chat: Saving the game (this may take a moment!)'); log('System chat: Saved the game'); }
     else if (cmd.startsWith('posset ')) { const [, n, x, y, z] = cmd.split(' '); pos.set(n, [Number(x), Number(y), Number(z)]); }
     else if (cmd.startsWith('data get entity ')) {
       const [n, p] = cmd.slice(16).split(' ');
