@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <rect width="256" height="256" rx="56" fill="#1d6b3a"/>
-  <!-- isometric block -->
-  <path d="M128 46 208 90v76l-80 44-80-44V90z" fill="#3fb866"/>
-  <path d="M128 46 208 90l-80 44-80-44z" fill="#7ee09a"/>
-  <path d="M128 134v76l-80-44V90z" fill="#2d9150"/>
-  <path d="M128 134 208 90v76l-80 44z" fill="#1f7a40"/>
-  <path d="M96 176v-34l16 9v34z" fill="#14502a" opacity=".55"/>
-</svg>
