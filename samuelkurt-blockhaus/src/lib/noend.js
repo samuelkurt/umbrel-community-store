@@ -33,6 +33,27 @@ async function dataFormat(jarFile) {
   return null;
 }
 
+/**
+ * Known only from the version number when the jar cannot be read (Forge, NeoForge and some launchers keep the vanilla jar
+ * somewhere else or not at all). A pack that every game version from 1.21 on accepts: the old fields for 1.21 to 1.21.8
+ * (formats 48 to 81) and min_format/max_format for everything newer. Both forms were checked on a 26.3 server (loads without a
+ * warning); the old fields are what 1.21.x reads.
+ */
+const COMPAT = { style: 'compat' };
+
+/** false only for a version that is known to be older than 1.21 (function folders were called functions/ before). */
+function canLock(mcVersion) {
+  const m = /^1\.(\d+)/.exec(String(mcVersion || ''));
+  return !(m && Number(m[1]) < 21);
+}
+
+/** The pack format to write: exact from the jar when it can be read, else the compatible one, else null (version too old). */
+async function resolveFormat(jarFile, mcVersion) {
+  const fmt = jarFile ? await dataFormat(jarFile) : null;
+  if (fmt) return fmt;
+  return canLock(mcVersion) ? COMPAT : null;
+}
+
 /** World spawn in the overworld from level.dat (26.x: Data.spawn.pos, before: SpawnX/Y/Z). */
 function worldSpawn(worldDir) {
   try {
@@ -48,9 +69,11 @@ function files({ fmt, spawn }) {
   if (!fmt) throw Object.assign(new Error('Die Datenpaket-Version des Servers ließ sich nicht aus der server.jar lesen.'), { status: 409 });
   if (fmt.style === 'legacy' && fmt.format < FIRST_FUNCTION_FORMAT) throw Object.assign(new Error('Das End lässt sich erst ab Minecraft 1.21 sperren (ältere Versionen nutzen andere Ordnernamen).'), { status: 409 });
   if (!Array.isArray(spawn) || spawn.length !== 3 || !spawn.every(Number.isFinite)) throw Object.assign(new Error('Der Welt-Spawn ist noch nicht bekannt. Starte den Server einmal, damit die Welt erzeugt wird.'), { status: 409 });
-  const meta = fmt.style === 'minor'
-    ? { pack: { description: DESCRIPTION, min_format: fmt.format, max_format: fmt.format } }
-    : { pack: { description: DESCRIPTION, pack_format: fmt.format } };
+  const meta = fmt.style === 'compat'
+    ? { pack: { description: DESCRIPTION, pack_format: 48, supported_formats: [48, 81], min_format: 48, max_format: 9999 } }
+    : fmt.style === 'minor'
+      ? { pack: { description: DESCRIPTION, min_format: fmt.format, max_format: fmt.format } }
+      : { pack: { description: DESCRIPTION, pack_format: fmt.format } };
   const [x, y, z] = spawn;
   return {
     'pack.mcmeta': JSON.stringify(meta, null, 2) + '\n',
@@ -65,8 +88,9 @@ function isOurs(worldDir) {
 }
 const installed = (worldDir) => isOurs(worldDir);
 
-async function install(worldDir, { jarFile, spawn }) {
-  const fmt = await dataFormat(jarFile);
+async function install(worldDir, { jarFile, spawn, mcVersion }) {
+  const fmt = await resolveFormat(jarFile, mcVersion);
+  if (!fmt) throw Object.assign(new Error('Das End lässt sich erst ab Minecraft 1.21 sperren (ältere Versionen nutzen andere Ordnernamen).'), { status: 409 });
   const f = files({ fmt, spawn: spawn || worldSpawn(worldDir) });
   const root = folderOf(worldDir);
   if (fs.existsSync(root) && !isOurs(worldDir)) throw Object.assign(new Error(`Im Ordner datapacks gibt es schon „${NS}“, aber nicht von Blockhaus. Es wird nicht überschrieben.`), { status: 409 });
@@ -89,4 +113,4 @@ async function remove(worldDir) {
   return true;
 }
 
-module.exports = { NS, PACK_ID, TAG, MESSAGE, files, dataFormat, worldSpawn, installed, install, remove, folderOf };
+module.exports = { NS, PACK_ID, TAG, MESSAGE, COMPAT, canLock, resolveFormat, files, dataFormat, worldSpawn, installed, install, remove, folderOf };

@@ -212,7 +212,7 @@ async function handle(c) {
       return send(res, 200, {
         running, version: (inst && inst.version) || null, era, available: g.exists, rules: g.rules, categories: gamerules.CATEGORIES,
         nether: nether ? nether.value : null,
-        end: { locked: noend.installed(worldDir), tag: noend.TAG, supported: !!(await jarFormat()) },
+        end: { locked: noend.installed(worldDir), tag: noend.TAG, supported: !!(await jarFormat()) || noend.canLock(inst && inst.version) },
       }), true;
     }
     if (m === 'PUT' && rest === 'gamerules') {
@@ -240,7 +240,7 @@ async function handle(c) {
       if (want) {
         const f = await jarFormat();
         let r;
-        try { r = await noend.install(worldDir, { jarFile: f ? f.jar : path.join(dir, 'server.jar') }); } catch (e) { throw new HttpError(e.status || 500, e.message); }
+        try { r = await noend.install(worldDir, { jarFile: f ? f.jar : null, mcVersion: inst && inst.version }); } catch (e) { throw new HttpError(e.status || 500, e.message); }
         let active = null;
         if (running) {
           // "reload" finds the new pack and switches it on by itself (checked on a 26.3 server)

@@ -952,7 +952,7 @@ async function viewGamerules(token) {
     h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'End betretbar'),
       h('small', {}, d.end.supported
         ? `Minecraft hat dafür keinen Schalter. „Aus“ legt ein kleines Datenpaket in die Welt (datapacks/blockhaus_noend), das jeden Spieler im End sofort zum Welt-Spawn der Oberwelt zurückschickt. Ausnahme für dich: /tag ${'<Name>'} add ${d.end.tag}.`
-        : 'Die Datenpaket-Version dieses Servers ließ sich nicht aus der server.jar lesen, deshalb kann Blockhaus das End nicht sperren.')),
+        : 'Vor Minecraft 1.21 lässt sich das End mit Blockhaus nicht sperren (die Datenpakete nutzen dort andere Ordnernamen).')),
       d.end.supported ? liveSwitch(() => !d.end.locked, async (open) => {
         const r = await api('PUT', P('/gamerules/end'), { locked: !open });
         d.end.locked = !open;

@@ -96,7 +96,7 @@ test('noend: install and remove touch only their own folder', async () => {
   assert.equal(await noend.dataFormat(path.join(tmpdir(), 'missing.jar')), null);
 });
 
-async function setup() {
+async function setup({ realJar = true, version = '26.3' } = {}) {
   const tmp = tmpdir(); const serversDir = path.join(tmp, 'servers'); fs.mkdirSync(serversDir, { recursive: true });
   const bin = path.join(tmp, 'java'); fs.writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, 'fake-mc.js')}" "$@"\n`, { mode: 0o755 });
   const mcPort = await freePort();
@@ -105,9 +105,9 @@ async function setup() {
   await new Promise((r) => app.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.address().port}`;
   const call = async (method, p, body) => { const res = await fetch(base + p, { method, headers: body !== undefined ? { 'Content-Type': 'application/json' } : {}, body: body !== undefined ? JSON.stringify(body) : undefined }); const text = await res.text(); let json = null; try { json = JSON.parse(text); } catch { /* */ } return { status: res.status, json }; };
-  const mk = await call('POST', '/api/local/servers', { name: 'Welt', kind: 'vanilla', version: '26.3', memoryMb: 1024 });
+  const mk = await call('POST', '/api/local/servers', { name: 'Welt', kind: 'vanilla', version, memoryMb: 1024 });
   const id = mk.json.server.id; await waitFor(async () => (await call('GET', `/api/local/jobs/${mk.json.job.id}`)).json.status === 'done');
-  const dir = path.join(serversDir, 'welt'); await jarWith(path.join(dir, 'server.jar'), V263);
+  const dir = path.join(serversDir, 'welt'); if (realJar) await jarWith(path.join(dir, 'server.jar'), V263);
   return { id, dir, call, api: (p) => `/api/servers/${id}/${p}`, close: async () => { await app.local.shutdown(2000).catch(() => {}); app.close(); app.closeAllConnections?.(); } };
 }
 
@@ -163,4 +163,22 @@ test('page API, server running: rules go through the console, the End lock reloa
     assert.match(await con(), /Disabling data pack \[file\/blockhaus_noend/);
     await t.call('POST', t.api('action/stop'), {});
   } finally { await t.close(); }
+});
+
+test('End lock when the jar cannot be read (Forge, NeoForge, launchers): a pack for every version from 1.21, refused for older ones', async () => {
+  for (const [version, ok] of [['26.3', true], ['1.21.4', true], ['1.20.4', false]]) {
+    const t = await setup({ realJar: false, version });
+    try {
+      const world = path.join(t.dir, 'world'); levelDat(world, [3, 70, 4]);
+      const g = (await t.call('GET', t.api('gamerules'))).json; assert.equal(g.end.supported, ok, version);
+      const r = await t.call('PUT', t.api('gamerules/end'), { locked: true });
+      assert.equal(r.status, ok ? 200 : 409, version);
+      if (ok) {
+        const meta = JSON.parse(fs.readFileSync(path.join(world, 'datapacks', 'blockhaus_noend', 'pack.mcmeta'), 'utf8')).pack;
+        assert.deepEqual([meta.pack_format, meta.supported_formats, meta.min_format, meta.max_format], [48, [48, 81], 48, 9999]);
+        assert.match(fs.readFileSync(path.join(world, 'datapacks', 'blockhaus_noend', 'data', 'blockhaus_noend', 'function', 'zurueck.mcfunction'), 'utf8'), /tp @s 3 70 4/);
+      } else assert.match(r.json.error, /1\.21/);
+    } finally { await t.close(); }
+  }
+  assert.equal(noend.canLock(null), true); assert.equal(noend.canLock('1.21'), true); assert.equal(noend.canLock('1.9'), false);
 });
