@@ -3,12 +3,12 @@
 German-language, Aternos-style panel for a Minecraft server managed by Crafty Controller 4.
 Owner only, no public page. Friends connect with the normal Minecraft address.
 
-> **0.5.0:** the same panel also exists as **Blockhaus Solo** (`../samuelkurt-blockhaus-solo`), which starts Minecraft
+> **0.5.0 / 0.6.0 / 0.7.0:** the same panel also exists as **Blockhaus Solo** (`../samuelkurt-blockhaus-solo`), which starts Minecraft
 > itself and needs no Crafty. Install either this app (with Crafty) or Solo; both can be installed next to each other
 > (their ports differ), but should not run the *same* server folder at the same time. The code is shared:
 > `node scripts/sync-solo.js` copies `src/` to the Solo folder (a test fails when the copies differ).
 
-## What is in this version (0.5.0)
+## What is in this version (0.7.0)
 
 | Page | What it does |
 |---|---|
@@ -25,6 +25,9 @@ Owner only, no public page. Friends connect with the normal Minecraft address.
 | Mods & Plugins | List `mods/` or `plugins/` (by the installed software), enable/disable, delete, upload a jar, search Modrinth and install with required dependencies (sha512 checked). Tab "Schneller": a curated list of performance mods (Lithium, FerriteCore, ServerCore, ModernFix, Ksyxis, Clumps, Chunky, spark, ...) that shows only what Modrinth really has for your loader and Minecraft version, with a hint when the other loader has more |
 | Texturpakete | Upload several resource-pack ZIPs, order them, publish them as one bundle that your players download directly from Blockhaus. Checks every ZIP (see below) |
 | Voice Chat | Finds Simple Voice Chat in `mods/`/`plugins/`, shows its config and the port from the server log, and sets `port` and `voice_host` in `config/voicechat/voicechat-server.properties` (rest of the file untouched, `.blockhaus.bak` kept). Explains the three things a tunnel setup needs (see below) |
+| Leistung *(dedicated-server mode only)* | Computer performance: CPU, memory, load, temperature, power draw in watts (RAPL / GPU hwmon / battery; not measured at the plug), network, disk throughput and space, per-core load, biggest processes, and the share used by Minecraft; history up to 1 h |
+| Terminal *(dedicated-server mode only)* | A real shell in the browser (several tabs, survives closing the page, replay of the last screen, key bar for phones) |
+| Anticheat *(Solo and dedicated server only)* | Server-side, **records and never acts by itself** (no automatic kick, ban or warning; manual buttons on each finding). Flags impossible items (bedrock, command blocks, spawners, spawn eggs, enchantments above vanilla maximum, stacks above the maximum, unbreakable items; also inside shulker boxes and bundles), speed, large jumps and flying/hovering of online players, chat spam, connection floods, many names per address, vanilla warnings (`moved too quickly`, floating kicks) and x-ray hints from the statistics. Optional allow-lists (file name + SHA-256) for mods/plugins and for the server's texture pack. Points per player that fade over time, warnings on the page and a counter in the menu. Operators are exempt by default. See "Anticheat" below |
 | Einstellungen | Version of Blockhaus, Crafty URL, API token (or user + password), public address to show friends, connection test |
 
 ### Texture packs
@@ -125,6 +128,18 @@ starts the real server with the same Java and memory flags. What is installed is
 a version needs, but the Java Crafty uses is set in Crafty (server configuration / its Java setting).
 A too-old Java makes the server fail to start.
 
+## Dedicated-server mode (Debian, without UmbrelOS)
+
+`BLOCKHAUS_MODE=local` plus `BLOCKHAUS_HOST=1` runs the panel directly on a Debian/Ubuntu server and adds the pages
+**Leistung** and **Terminal** and an own login (Umbrel's login is not there). Everything is in
+[`../deploy/debian`](../deploy/debian/README-DEBIAN.md): `install.sh` (also updates), `uninstall.sh`,
+`import-from-umbrel.sh`, the systemd unit, and a German guide with the security model. Short version:
+
+- `BLOCKHAUS_HOST=1` turns on login + Leistung + Terminal; `BLOCKHAUS_AUTH=1` turns on only the login; `BIND` sets the listen address.
+- The password is set only from the command line (`node server.js --set-password`, or `blockhaus-passwd`), stored as an scrypt hash, and a changed password ends every open session.
+- The terminal is a shell of the service user (an unprivileged user without sudo). The panel speaks plain HTTP: use it in a trusted network, over VPN or an SSH tunnel, never port-forwarded.
+- Without these variables (Umbrel) nothing changes: no login, no host routes (tested).
+
 ## Limits
 
 - ZIPs: no ZIP64, so under 65,535 files and under 4 GB per backup / world upload.
@@ -139,6 +154,8 @@ Verified (automated, with real data): texture-pack checks and the published bund
 starts of Vanilla, Paper, Purpur, Fabric, Quilt, Forge and NeoForge for 1.21.4; Modrinth search /
 install / dependencies; ZIP interop with `zip` / `unzip`; browser click-through of every page on
 desktop and phone width.
+
+Dedicated-server mode (verified on Ubuntu 24.04 with the real installer and the unprivileged service user; details and limits in `deploy/debian/README-DEBIAN.md`): login with lockout, sessions, WebSocket terminal on a real pseudo terminal, host statistics from `/proc` and `/sys`, a real Minecraft 26.3 start and clean stop on SIGTERM, migration from Umbrel data, browser click-through in Chromium. Not verified there: running under a live systemd, a real Debian, ARM, a temperature sensor, and the power-draw card on real hardware (only against a fake `/sys`).
 
 Not verified: that voice chat then connects through playit (no client or tunnel here; the Crafty port list comes from a GitHub file and your installed version may differ), that the performance mods run on your server (only that Modrinth lists a release for your loader and version), the pack download through the real playit.gg tunnel (HTTP over a tunnel meant for Minecraft, use "Von außen testen"), Umbrel accepting the extra published port, a real Minecraft client applying the pack, pack rules of Minecraft versions older than 26.x (the repair is only applied for 26.x), the real Crafty (API shapes come from its OpenAPI docs, tests use a mock), the Java
 version of your Crafty, large uploads through Umbrel's proxy, the seed location in 26.x worlds,
@@ -162,3 +179,29 @@ NET=1 node --test test/net.test.js   # real Mojang / Paper / Purpur / Fabric / Q
 ```
 
 downloads a few hundred MB and needs internet.
+
+### Anticheat (Blockhaus Solo and dedicated server)
+
+It runs inside Blockhaus and only works when Blockhaus starts Minecraft itself, because it needs the live console. In the
+Crafty app the page is not shown. Nothing happens by itself: nobody is kicked, banned or warned automatically. Findings are listed on the
+page and counted next to the menu entry, and every finding has **manual buttons** (see below). Records are stored in `<data>/anticheat/<server>/` (`config.json`, `flags.json`).
+
+Manual actions (0.7.1; each needs a click and, where it destroys something, a confirmation):
+
+- **Item entfernen / Behälter entfernen** for item findings: before anything happens Blockhaus asks the server what lies in that slot *now* (`data get entity <name> Inventory[{Slot:Nb}].id`, `EnderItems[...]`, `equipment.<slot>`); only if it is still the flagged item, `item replace entity <name> <slot> with minecraft:air` runs, and a second query confirms the slot is empty. A copy of the stack (NBT) is stored in the finding. For an item inside a shulker box or bundle the whole container is removed. If the player is offline the removal is queued and runs about 4 s after they join. Verified on a real 26.3 server for inventory, helmet, offhand, ender chest, a shulker box with bedrock inside, and the queued case.
+- **Verwarnen** (`tell`), **Kicken**, **Bannen** (reason is entered by you; line breaks are removed), **Zurücksetzen** (after "Großer Sprung": back to the last position and dimension), **Adresse sperren** (`ban-ip`, for connection floods; shared home-network addresses affect everyone behind them), **Mod abschalten** (renames the file to `.disabled`, restart needed).
+- Players are addressed by name only if the name is certain; findings that only know a player id offer no player actions. Unban in the players list.
+
+How it sees things (checked against a real Minecraft 26.3 server):
+
+- **Console lines**: logins with address, chat, the server's own warnings, kicks. Chat text is never interpreted as a server message.
+- **Player data / statistics files** (`world/players/data`, `world/players/stats`): items and x-ray hints. New data appears when the server saves or the player leaves.
+- **Queries** (only the speed and flying checks): for every online, non-exempt player Blockhaus sends `data get entity <name> Pos|OnGround|Dimension`
+  every 5 s, and on suspicion `RootVehicle`, `FallFlying`, `playerGameType`, `abilities`, `active_effects`, `Health` and one `execute ... if block` test.
+  The answers are removed from Blockhaus' console view, **but the server still writes them to `logs/latest.log`**. Switch off "Geschwindigkeit" and "Fliegen" for a quiet log.
+  Vehicles, elytra, creative/spectator, flight permission, Speed potions, levitation, water, ladders and dead players are excused; `/tp` and dimension changes are ignored.
+
+What it cannot do: it does not see packets, so no reach, killaura, autoclicker, scaffold, nuker or no-fall. **Clients**: a vanilla server neither logs the client brand nor
+can it be read in online mode, so there is no client list. Texture packs a player installed themselves are invisible too; only the pack the server hands out is checked.
+Player commands are not written to the log by vanilla, so command spam is only seen on servers that log them (e.g. Paper; not verified here). A hover is only noticed
+if the client reports "not on ground" and there is at least one block of air below. A player who dies and respawns far away can show up as an "Großer Sprung" (info only).

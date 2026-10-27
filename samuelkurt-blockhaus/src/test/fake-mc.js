@@ -22,6 +22,7 @@ fs.mkdirSync('world', { recursive: true });
 fs.writeFileSync('world/level.dat', 'x'.repeat(2048));
 
 const players = new Set();
+const pos = new Map(); // name -> [x, y, z]; set with `posset <name> x y z`, read with `data get entity <name> Pos`
 let ready = false;
 log('Starting minecraft server version 26.3');
 log(`JVM args: ${JSON.stringify(process.argv.slice(2))}`, 'INFO', 'main');
@@ -63,6 +64,16 @@ process.stdin.on('data', (c) => {
       setTimeout(() => process.exit(0), Number(read('slow-exit', '30')));
     } else if (cmd === 'crash') { log('Encountered an unexpected exception', 'ERROR'); process.exit(3); }
     else if (cmd.startsWith('join ')) { const n = cmd.slice(5); players.add(n); log(`${n} joined the game`); }
+    else if (cmd.startsWith('posset ')) { const [, n, x, y, z] = cmd.split(' '); pos.set(n, [Number(x), Number(y), Number(z)]); }
+    else if (cmd.startsWith('data get entity ')) {
+      const [n, p] = cmd.slice(16).split(' ');
+      const say = (t) => log(`System chat: ${t}`);
+      if (!players.has(n)) { say('No entity was found'); continue; }
+      const P = pos.get(n) || [0, 64, 0];
+      const A = { Pos: `[${P[0]}d, ${P[1]}d, ${P[2]}d]`, OnGround: '1b', Dimension: '"minecraft:overworld"', FallFlying: '0b', playerGameType: '0', Health: '20.0f',
+        abilities: '{invulnerable: 0b, mayfly: 0b, instabuild: 0b, walkSpeed: 0.1f, mayBuild: 1b, flying: 0b, flySpeed: 0.05f}' };
+      if (A[p] !== undefined) say(`${n} has the following entity data: ${A[p]}`); else say(`Found no elements matching ${p}`);
+    }
     else if (cmd.startsWith('leave ')) { const n = cmd.slice(6); players.delete(n); log(`${n} left the game`); }
     else log(`echo: ${cmd}`);
   }

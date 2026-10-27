@@ -345,6 +345,38 @@ async function handle(c) {
     }
   }
 
+  // ---- anticheat (only Blockhaus' own servers; it records, it never acts) ----
+  if (rest === 'anticheat' || rest.startsWith('anticheat/')) {
+    const ac = c.anticheat;
+    if (!ac) return send(res, 200, { available: false, reason: 'Der Anticheat gibt es nur, wenn Blockhaus den Minecraft-Server selbst startet (Blockhaus-Solo oder eigener Server). Crafty gibt Blockhaus die Spielerereignisse nicht live weiter.' }), true;
+    const sid = String(server.server_id);
+    if (m === 'GET' && rest === 'anticheat') return send(res, 200, ac.view(sid)), true;
+    if (m === 'PUT' && rest === 'anticheat/config') { const b = await readJson(req); ac.setConfig(sid, b); return send(res, 200, ac.view(sid)), true; }
+    if (m === 'POST' && rest === 'anticheat/ack') {
+      const b = await readJson(req);
+      const n = ac.store(sid).ack({ id: b.id ? String(b.id) : undefined, player: b.player === undefined ? undefined : String(b.player), all: b.all === true });
+      return send(res, 200, { ok: true, acknowledged: n }), true;
+    }
+    if (m === 'POST' && rest === 'anticheat/clear') {
+      const b = await readJson(req);
+      const n = ac.store(sid).clear({ all: b.all === true, acked: b.acked === true, player: b.player === undefined ? undefined : String(b.player) });
+      return send(res, 200, { ok: true, removed: n }), true;
+    }
+    if (m === 'POST' && rest === 'anticheat/act') {
+      const b = await readJson(req);
+      try { return send(res, 200, await ac.act(sid, String(b.id || ''), String(b.action || ''), b.text === undefined ? '' : String(b.text))), true; }
+      catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw e; }
+    }
+    if (m === 'POST' && rest === 'anticheat/scan') return send(res, 200, { ok: true, ...(await ac.scanNow(sid)) }), true;
+    if (m === 'GET' && rest === 'anticheat/allow') return send(res, 200, await ac.allowView(sid)), true;
+    if (m === 'POST' && rest === 'anticheat/allow/snapshot') {
+      const b = await readJson(req);
+      try { return send(res, 200, { ok: true, allow: await ac.allowSnapshot(sid, String(b.kind || '')) }), true; }
+      catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw e; }
+    }
+    throw new HttpError(404, 'Unbekannter Endpunkt.');
+  }
+
   // ---- inventories ----
   if (rest === 'inventory/players' && m === 'GET') {
     const dir = c.dir();
