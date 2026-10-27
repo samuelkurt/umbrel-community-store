@@ -8,8 +8,14 @@ function longToJs(b) {
   return (b >= BigInt(Number.MIN_SAFE_INTEGER) && b <= BigInt(Number.MAX_SAFE_INTEGER)) ? Number(b) : b.toString();
 }
 
-/** Parse a (possibly gzip-compressed) NBT file. Returns { name, value }. Longs beyond 2^53 come back as strings. */
-function parse(buf) {
+const NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k.toLowerCase()]));
+
+/**
+ * Parse a (possibly gzip-compressed) NBT file. Returns { name, value }. Longs beyond 2^53 come back as strings.
+ * With { typed: true } every member of a compound is returned as { t, v } (lists as { t: 'list', of, v }), exactly the form
+ * encode() takes, so a file can be read, one value changed and written back without losing the types.
+ */
+function parse(buf, { typed = false } = {}) {
   if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
   let p = 0;
   const need = (n) => { if (p + n > buf.length) throw new Error('NBT-Datei ist abgeschnitten.'); };
@@ -29,6 +35,7 @@ function parse(buf) {
         need(5); const et = buf.readUInt8(p++); const n = buf.readInt32BE(p); p += 4;
         const out = [];
         for (let i = 0; i < n; i++) out.push(payload(et, depth + 1));
+        if (typed) { if (et === T.LIST || et === T.BYTE_ARRAY || et === T.LONG_ARRAY) throw new Error('NBT: verschachtelte Listen werden im typisierten Modus nicht unterstützt.'); return { list: true, of: NAMES[et], items: out }; }
         return out;
       }
       case T.COMPOUND: {
@@ -37,7 +44,8 @@ function parse(buf) {
           need(1); const t = buf.readUInt8(p++);
           if (t === T.END) break;
           const k = readString();
-          o[k] = payload(t, depth + 1);
+          const v = payload(t, depth + 1);
+          o[k] = typed ? (t === T.LIST ? { t: 'list', of: v.of, v: v.items } : { t: NAMES[t], v }) : v;
         }
         return o;
       }

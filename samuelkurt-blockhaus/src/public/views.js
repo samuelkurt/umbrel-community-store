@@ -629,6 +629,7 @@ async function viewPacks(token) {
     put(resultBox, x.ok
       ? h('div', { class: 'notice ok' }, h('span', {}, `Der Download klappt über ${x.url}: ${fmtSize(x.bytes)} in ${(x.ms / 1000).toFixed(1)} s (${x.mbps.toFixed(1)} MBit/s), Prüfsumme stimmt.`))
       : h('div', { class: 'notice err' }, h('span', {}, x.error ? `Von dieser Adresse lässt sich nichts laden: ${x.error}` : 'Die Datei kommt an, aber die Prüfsumme weicht ab. Ein Proxy oder Tunnel verändert die Daten.'),
+        x.hint ? h('span', {}, x.hint) : null,
         h('span', { class: 'small' }, 'Prüfe die Schritte unter „So kommt das Paket zu deinen Freunden“.')));
   });
 
@@ -644,6 +645,11 @@ async function viewPacks(token) {
       h('li', {}, 'Unten Pakete hochladen, ordnen und „Veröffentlichen und eintragen“ drücken.'),
       h('li', {}, 'Mit „Von außen testen“ prüft Blockhaus, ob der Download über diese Adresse klappt.')),
     h('p', { class: 'muted small' }, 'Minecraft selbst läuft dabei unverändert über den bisherigen Tunnel. Ein kostenloses playit-Konto hat laut playit.gg 4 Ports: Minecraft, Pakete und der Voice Chat belegen zusammen 3.'),
+    d.mcPort ? h('p', { style: 'margin-bottom:4px' }, h('b', {}, 'Weg C: Portweiterleitung im Router (ohne playit)')) : null,
+    d.mcPort ? h('ol', {},
+      h('li', {}, `Im Router zwei Weiterleitungen auf diesen Rechner anlegen: TCP ${d.mcPort} (Minecraft) und TCP ${port} (Texturpakete). Beide sind nötig, denn auf dem Minecraft-Port gibt es keinen Download.`),
+      h('li', {}, h('span', {}, 'Unter '), h('a', { href: '#/settings' }, 'Einstellungen'), ` die öffentliche Adresse eintragen (z. B. meinserver.example.org oder die DynDNS-Adresse). Daraus macht Blockhaus die Download-Adresse mit Port ${port} von selbst.`),
+      h('li', {}, 'Veröffentlichen, dann „Von außen testen“. Klappt es nicht, sagt der Test, ob der Pack-Server lokal antwortet (dann fehlt die Weiterleitung oder die Firewall blockt) oder nicht.')) : null,
     h('p', { style: 'margin-bottom:4px' }, h('b', {}, 'Weg B: den Minecraft-Tunnel umlegen')),
     h('p', { class: 'muted small' }, `Im Dashboard den lokalen Port des Minecraft-Tunnels von 25565 auf ${port} ändern und unter Einstellungen die öffentliche Adresse eintragen. Blockhaus nimmt dann alles an, liefert Pakete aus und reicht Minecraft-Verbindungen an ${d.upstream || 'host.docker.internal:25565'} weiter. Fällt Blockhaus aus, kann über playit niemand mehr joinen. Nicht geprüft ist, ob playit Web-Anfragen durch einen Minecraft-Tunnel lässt; „Von außen testen“ zeigt es dir.`));
 
@@ -676,6 +682,7 @@ async function viewPacks(token) {
 
   const status = h('div', { class: 'card' }, h('h2', {}, 'Aktuell eingetragen'),
     !addr ? h('div', { class: 'notice warn' }, h('span', {}, 'Es ist noch keine öffentliche Adresse eingetragen.'), h('a', { href: '#/settings' }, h('button', { class: 'small' }, 'Zu den Einstellungen'))) : null,
+    d.base.note ? h('div', { class: 'notice' }, d.base.note) : null,
     ap ? h('div', {},
       ap.url ? h('div', { class: 'addr' }, h('code', {}, ap.url), h('button', { class: 'small', onclick: () => copy(ap.url) }, 'Kopieren')) : null,
       h('p', { class: 'muted small' }, `${ap.packs.length} Paket${ap.packs.length === 1 ? '' : 'e'} · ${fmtSize(ap.size)} · SHA-1 ${ap.sha1.slice(0, 12)}… · ${fmtDate(ap.at)}${ap.patched ? ' · Format-Angabe repariert' : ''}${ap.overwritten ? ` · ${ap.overwritten} Datei(en) kamen in mehreren Paketen vor, es gilt das obere` : ''}`),
@@ -896,5 +903,70 @@ async function viewServers(token) {
   loadVersions();
 }
 
-window.BHViews = { servers: viewServers, files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks, voice: viewVoice };
+
+// ---------- game rules, portals ---------------------------------------------------------
+/** A switch that applies immediately (no save bar): on error it jumps back and says why. */
+function liveSwitch(get, apply, label) {
+  const cb = h('input', { type: 'checkbox', checked: get(), 'aria-label': label });
+  cb.onchange = async () => {
+    const want = cb.checked; cb.disabled = true;
+    try { await apply(want); } catch (e) { cb.checked = !want; toast(e.message, true); }
+    cb.disabled = false;
+  };
+  return h('label', { class: 'switch' }, cb, h('i'));
+}
+
+async function viewGamerules(token) {
+  const d = await api('GET', P('/gamerules?sync=1'));
+  if (token !== getToken()) return;
+  const setRule = async (name, value) => {
+    const r = await api('PUT', P('/gamerules'), { name, value });
+    toast(r.running ? 'Gilt sofort.' : 'Gespeichert. Gilt beim nächsten Start des Servers.');
+  };
+  let filter = '';
+  const listBox = h('div', {});
+  const paintList = () => {
+    const f = filter.trim().toLowerCase();
+    const groups = d.categories.map((cat) => [cat, d.rules.filter((r) => r.category === cat && r.name !== 'allow_entering_nether_using_portals' && (!f || r.label.toLowerCase().includes(f) || r.name.includes(f)))]).filter(([, l]) => l.length);
+    put(listBox, ...(groups.length ? groups.map(([cat, list]) => h('div', { class: 'card' }, h('h2', {}, cat),
+      list.map((r) => h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, r.label), h('small', {}, r.hint ? `${r.hint} ` : '', h('code', {}, r.name))),
+        r.type === 'bool' ? liveSwitch(() => r.value, async (v) => { await setRule(r.name, v); r.value = v; }, r.label)
+          : (() => {
+            const inp = h('input', { type: 'number', step: 1, value: r.value, 'aria-label': r.label, style: 'width:130px' });
+            const commit = async () => {
+              if (String(r.value) === inp.value || inp.value === '') { inp.value = r.value; return; }
+              try { await setRule(r.name, Number(inp.value)); r.value = Number(inp.value); } catch (e) { inp.value = r.value; toast(e.message, true); }
+            };
+            inp.onchange = commit;
+            return inp;
+          })())))) : [h('div', { class: 'card' }, h('p', { class: 'muted' }, 'Keine Spielregel passt zur Suche.'))]));
+  };
+  const search = h('input', { type: 'search', placeholder: 'Suchen …', 'aria-label': 'Spielregeln durchsuchen', oninput: () => { filter = search.value; paintList(); } });
+  const mut = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+
+  const portals = h('div', { class: 'card' }, h('h2', {}, 'Portale'),
+    d.nether === null
+      ? h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Nether'), h('small', {}, 'Die Spielregel „Nether-Portale erlaubt“ gibt es in dieser Welt nicht.')))
+      : h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Nether betretbar'), h('small', {}, 'Ab Minecraft 26 eine Spielregel (die Einstellung allow-nether in den Optionen gibt es dort nicht mehr). Gilt sofort, auch für Spieler, die gerade ein Portal benutzen wollen.')),
+        liveSwitch(() => d.nether, async (v) => { await setRule('allow_entering_nether_using_portals', v); d.nether = v; }, 'Nether betretbar')),
+    h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'End betretbar'),
+      h('small', {}, d.end.supported
+        ? `Minecraft hat dafür keinen Schalter. „Aus“ legt ein kleines Datenpaket in die Welt (datapacks/blockhaus_noend), das jeden Spieler im End sofort zum Welt-Spawn der Oberwelt zurückschickt. Ausnahme für dich: /tag ${'<Name>'} add ${d.end.tag}.`
+        : 'Die Datenpaket-Version dieses Servers ließ sich nicht aus der server.jar lesen, deshalb kann Blockhaus das End nicht sperren.')),
+      d.end.supported ? liveSwitch(() => !d.end.locked, async (open) => {
+        const r = await api('PUT', P('/gamerules/end'), { locked: !open });
+        d.end.locked = !open;
+        toast(open ? 'End ist wieder offen.' : (r.running ? (r.active === false ? 'Gesperrt, aber das Datenpaket ist nicht aktiv. Server neu starten.' : 'End gesperrt. Gilt sofort.') : 'End gesperrt. Gilt beim nächsten Start.'), r.active === false);
+      }, 'End betretbar') : null));
+
+  put(main, header('Spielregeln', 'Schalter für das Verhalten der Welt, auch für Portale. Die Welt wird dabei gespeichert.'),
+    !d.available
+      ? h('div', { class: 'card' }, h('p', {}, d.era ? 'Für diese Welt gibt es noch keine Spielregel-Datei. Starte den Server einmal und öffne die Seite danach wieder.' : 'Diese Seite liest die Spielregeln aus der Weltdatei, die Minecraft ab Version 26 anlegt. Für ältere Versionen gibt es sie nicht; dort gehen Spielregeln weiter über die Konsole (/gamerule).'),
+        h('p', { class: 'muted small' }, 'Das End lässt sich trotzdem sperren:'), portals)
+      : [d.running ? h('div', { class: 'notice' }, 'Der Server läuft: Änderungen gelten sofort.') : h('div', { class: 'notice' }, 'Der Server läuft nicht: Änderungen werden in die Weltdatei geschrieben und gelten beim nächsten Start (eine Kopie liegt als .blockhaus.bak daneben).'),
+        portals, h('div', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, search), h('button', { class: 'small', onclick: mut(async () => { window.BH.route(); }) }, 'Neu laden'))), listBox]);
+  if (d.available) paintList();
+}
+
+window.BHViews = { servers: viewServers, files: viewFiles, worlds: viewWorlds, backups: viewBackups, software: viewSoftware, mods: viewMods, inventory: viewInventory, packs: viewPacks, voice: viewVoice, gamerules: viewGamerules, liveSwitch };
 })();

@@ -32,6 +32,7 @@ const ASK_TIMEOUT_MS = 2500;
 const ADMIN_ASK_MS = 8000;
 const EQUIP = { feet: 100, legs: 101, chest: 102, head: 103, offhand: -106 };
 const MAX_POLLED = 40;
+const WET_QUIET_MS = 8000; // after water, a ladder or similar: no fly verdict for this long
 
 /** One query at a time: the console answers in order, and the answers carry no id. */
 class Asker {
@@ -369,6 +370,14 @@ class Anticheat {
       }
     }
     // flying: (a) hovering = same height for several samples, mostly reported as "not on ground"; (b) rising without ground contact
+    // Off the ground in water (swimming up, treading water), on a ladder, in a web … is normal, and it looks exactly like a hover
+    // or a climb in the position samples. So every off-ground sample is checked for open air around the player right then, and a
+    // player who was in something other than air a moment ago is not judged (the swim to the surface ends with a jump out of the
+    // water, which is open air for a second).
+    if (cfg.checks.fly && !cur.ground) {
+      cur.air = await this._openAir(sid, name, false).catch(() => null);
+      if (cur.air !== true) ps.wetAt = cur.t;
+    }
     ps.hist.push(cur);
     if (ps.hist.length > 20) ps.hist.shift();
     const n = th.flyOffGroundSamples;
@@ -379,10 +388,12 @@ class Anticheat {
         const ys = win.map((x) => x.y);
         const off = win.filter((x) => !x.ground).length;
         // bunny-hopping is off the ground most of the time too, but its height keeps changing; a hover does not
-        if (Math.max(...ys) - Math.min(...ys) < 0.15 && off >= Math.ceil(n * 0.6)) kind = 'hover';
+        const openAll = win.filter((x) => !x.ground).every((x) => x.air === true);
+        if (Math.max(...ys) - Math.min(...ys) < 0.15 && off >= Math.ceil(n * 0.6) && openAll) kind = 'hover';
       }
       const tail = ps.hist.slice(-3);
-      if (!kind && tail.length === 3 && tail.every((x) => !x.ground) && tail[1].y - tail[0].y > 1 && tail[2].y - tail[1].y > 1) kind = 'rise';
+      if (!kind && tail.length === 3 && tail.every((x) => !x.ground && x.air === true) && tail[1].y - tail[0].y > 1 && tail[2].y - tail[1].y > 1) kind = 'rise';
+      if (kind && ps.wetAt && cur.t - ps.wetAt < WET_QUIET_MS) kind = null;
       if (kind) {
         ps.flyCool = cur.t + 30000;
         const facts = await this._confirmFacts(sid, name);

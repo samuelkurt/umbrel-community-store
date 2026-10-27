@@ -53,7 +53,7 @@ test('local mode: needs no Crafty setup; config view says so', async () => {
     const r = await t.call('GET', '/api/config');
     assert.equal(r.json.mode, 'local'); assert.equal(r.json.configured, true); assert.equal(r.json.mcPort, t.mcPort);
     assert.equal(r.json.packUpstream, `127.0.0.1:${t.mcPort}`); assert.equal(r.json.voicePort, 24454);
-    assert.equal(r.json.appVersion, '0.7.5');
+    assert.equal(r.json.appVersion, '0.8.2');
     assert.deepEqual((await t.call('GET', '/api/servers')).json, []);
     const test = await t.call('POST', '/api/config/test', {});
     assert.equal(test.json.ok, true);

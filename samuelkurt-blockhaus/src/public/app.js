@@ -85,6 +85,7 @@ const ICONS = {
   chart: '<path d="M4 20V4M4 20h16"/><path d="M8 15l3-4 3 2 4-6"/>',
   shell: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10l3 2.5L7 15M12.5 15H17"/>',
   logout: '<path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/>',
+  rules: '<path d="M5 6h2M5 12h2M5 18h2"/><path d="M10 6h9M10 12h9M10 18h9"/>',
   shield: '<path d="M12 3 5 6v5.5c0 4.4 2.9 8 7 9.5 4.1-1.5 7-5.1 7-9.5V6z"/><path d="M9 12l2 2 4-4"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
 };
@@ -107,6 +108,7 @@ const ROUTES = [
   { id: 'server', label: 'Server', icon: 'server', view: viewServer },
   { id: 'servers', label: 'Meine Server', icon: 'home', only: 'local', view: (t) => window.BHViews.servers(t) },
   { id: 'options', label: 'Optionen', icon: 'sliders', view: viewOptions },
+  { id: 'gamerules', label: 'Spielregeln', icon: 'rules', view: (t) => window.BHViews.gamerules(t) },
   { id: 'players', label: 'Spieler', icon: 'users', view: viewPlayers },
   { id: 'console', label: 'Konsole', icon: 'terminal', view: viewConsole },
   { id: 'inventory', label: 'Inventare', icon: 'backpack', view: (t) => window.BHViews.inventory(t) },
@@ -368,6 +370,10 @@ async function viewOptions(token) {
   const holder = h('div', {});
   main.replaceChildren(header('Optionen', 'Änderungen greifen erst nach einem Neustart des Servers.'), holder);
 
+  // Minecraft 26 dropped allow-nether from server.properties; the Nether is a game rule there (changed on the spot, not with "Speichern")
+  let gr = null;
+  try { gr = await api('GET', P('/gamerules')); } catch { /* old server or no access: keep the plain property */ }
+  if (token !== routeToken) return;
   const eff = (it) => (values[it.key] !== undefined ? values[it.key] : it.def);
   const uiVal = (it) => (it.invert ? String(eff(it) !== 'true') : eff(it));
 
@@ -429,7 +435,15 @@ async function viewOptions(token) {
     paintSave();
   }
 
+  function netherRow() {
+    const link = h('a', { href: '#/gamerules' }, 'Spielregeln');
+    if (gr.nether === null) return h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Nether'), h('small', {}, 'Seit Minecraft 26 eine Spielregel. Sie steht erst in der Welt, wenn der Server einmal gelaufen ist. Danach hier oder unter ', link, ' einstellbar.')));
+    return h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Nether'), h('small', {}, 'Seit Minecraft 26 eine Spielregel statt der Einstellung allow-nether. Der Schalter gilt sofort (laufender Server) bzw. beim nächsten Start; ohne „Speichern“. Mehr unter ', link, '.')),
+      window.BHViews.liveSwitch(() => gr.nether, async (v) => { await api('PUT', P('/gamerules'), { name: 'allow_entering_nether_using_portals', value: v }); gr.nether = v; toast(gr.running ? 'Gilt sofort.' : 'Gespeichert. Gilt beim nächsten Start.'); }, 'Nether'));
+  }
+
   function optRow(it) {
+    if (it.key === 'allow-nether' && gr && (gr.nether !== null || gr.era)) return netherRow();
     const row = h('div', { class: 'opt' });
     const warn = h('div', { class: 'warn' });
     const update = () => {
@@ -721,7 +735,7 @@ async function viewSettings() {
       field('Öffentliche Adresse für Freunde', f.publicAddress, 'Wird auf der Server-Seite zum Kopieren angezeigt (z. B. von playit.gg).'),
       field('Adresse im Heimnetz', f.localAddress, solo ? `Leer = diese Adresse im Browser plus Port ${c.mcPort}.` : null)),
     h('div', { class: 'card' }, h('h2', {}, 'Texturpakete'),
-      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, `Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port ${c.packPort || 25700}, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port ${c.packPort || 25700} zeigen.`),
+      field('Download-Adresse für Pakete (optional)', f.packBaseUrl, `Empfohlen: die Adresse eines zweiten playit-Tunnels (TCP) auf Port ${c.packPort || 25700}, z. B. http://abc.at.ply.gg:12345. Ohne Eintrag wird die öffentliche Adresse oben verwendet, dann muss der Minecraft-Tunnel selbst auf Port ${c.packPort || 25700} zeigen.${solo ? ` Ausnahme: nennt die öffentliche Adresse den Minecraft-Port (${c.mcPort} oder 25565), also bei Portweiterleitung im Router, nimmt Blockhaus dieselbe Adresse mit Port ${c.packPort || 25700}. Diesen Port musst du dann zusätzlich weiterleiten.` : ''}`),
       solo ? null : field('Minecraft-Server für die Weiterleitung', f.packUpstream, 'Blockhaus leitet Minecraft-Verbindungen, die über den Pack-Port kommen, an diese Adresse weiter (Standard: Crafty auf Port 25565).')),
     h('div', { class: 'row' }, solo ? null : h('button', { onclick: test }, 'Verbindung testen'), h('button', { class: 'primary', onclick: save }, 'Speichern')),
     h('div', { style: 'margin-top:14px' }, result));

@@ -59,7 +59,7 @@ button.big { font-size: 18px; padding: 12px 30px; font-weight: 700; border-radiu
 button.small { padding: 4px 9px; font-size: 13px; }
 button.ghost { background: transparent; }
 
-input[type=text], input[type=number], input[type=password], input[type=url], select, textarea {
+input[type=text], input[type=search], input[type=number], input[type=password], input[type=url], select, textarea {
   font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%;
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }

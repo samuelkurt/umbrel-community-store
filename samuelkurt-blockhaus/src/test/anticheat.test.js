@@ -247,7 +247,7 @@ function rig({ now = 1e9 } = {}) {
           return this.line(`System chat: ${m[1]} has the following entity data: ${v}`);
         }
         m = /^execute as (\S+) at @s if block/.exec(cmd);
-        if (m) { const p = world.get(m[1]); if (!p) return this.line('System chat: No entity was found'); if (p.air !== false) this.line('System chat: Test passed'); }
+        if (m) { const p = world.get(m[1]); if (!p) return this.line('System chat: No entity was found'); this.line(p.air !== false ? 'System chat: Test passed' : 'System chat: Test failed'); }
       });
     },
   };
@@ -402,6 +402,27 @@ test('flying: hovering and climbing are flagged, jumping, water, vehicles and cr
   assert.equal((await run({}, [64, 64, 64, 64, 64], true)).length, 0, 'standing on the ground');
   // falling is not flying
   assert.equal((await run({}, [100, 70, 40, 10])).length, 0);
+});
+
+test('flying: swimming up, treading water and the jump out of the water at the surface are not flying', async () => {
+  const r = rig();
+  try {
+    r.add('Bob', { ground: false }); r.online('Bob');
+    const bob = r.world.get('Bob');
+    const at = async (y, air) => { bob.pos = [0, y, 0]; bob.air = air; await r.poll(); };
+    // a swim up to the surface: two samples in water rising, the third one is the jump out, which is open air for a moment
+    await at(70, false); await at(78, false); await at(86, true);
+    assert.equal(r.flags('fly').length, 0, 'swim up and jump out');
+    // a longer swim, then the jump out
+    await at(100, false); await at(108, false); await at(116, false); await at(124, false); await at(131, true);
+    assert.equal(r.flags('fly').length, 0, 'long swim and jump out');
+    // treading water at the surface
+    for (let i = 0; i < 6; i++) await at(95, false);
+    assert.equal(r.flags('fly').length, 0, 'floating in water');
+    // a real hover later is still found (after the quiet time following the water)
+    for (let i = 0; i < 6; i++) await at(150, true);
+    assert.equal(r.flags('fly').length, 1); assert.equal(r.flags('fly')[0].key, 'hover');
+  } finally { r.done(); }
 });
 
 test('files: items in player data, creative and operators skipped, allow-lists for plugins and the resource pack', async () => {

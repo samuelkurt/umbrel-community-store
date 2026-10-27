@@ -13,6 +13,8 @@ const voicechat = require('./voicechat');
 const inventory = require('./inventory');
 const packs = require('./packs');
 const serverfiles = require('./serverfiles');
+const gamerules = require('./gamerules');
+const noend = require('./noend');
 const props = require('./props');
 const state = require('./state');
 const { writeFileKeepOwner } = require('./fsutil');
@@ -179,6 +181,79 @@ async function handle(c) {
       const text = await serverfiles.ask({ dir, send: sendCommand, command: 'seed', until: /Seed: \[?-?\d+\]?/ });
       const mm = /Seed: \[?(-?\d+)\]?/.exec(text);
       return send(res, 200, { seed: mm ? mm[1] : null }), true;
+    }
+    throw new HttpError(404, 'Unbekannter Endpunkt.');
+  }
+
+  // ---- game rules, portals ----
+  if (rest === 'gamerules' || rest.startsWith('gamerules/')) {
+    const dir = c.dir();
+    const worldDir = path.join(dir, activeWorld(dir));
+    const running = await isRunning();
+    const inst = await installedInfo(dir);
+    // The server only writes game_rules.dat when it saves, so a running server is asked to save first when asked to (?sync=1)
+    async function fresh(sync = true) {
+      if (running && sync) { try { await serverfiles.ask({ dir, send: sendCommand, command: 'save-all flush', until: /Saved the (?:game|world)/, timeoutMs: 15000 }); } catch { /* read what is there */ } }
+      return gamerules.read(worldDir);
+    }
+    async function jarFormat() {
+      const cand = [];
+      for (const n of [inst && inst.jar, 'server.jar']) if (n && !cand.includes(n)) cand.push(path.join(dir, n));
+      for (const sub of ['versions', path.join('.fabric', 'server')]) {
+        try { for (const v of fs.readdirSync(path.join(dir, sub))) { try { for (const f of fs.readdirSync(path.join(dir, sub, v))) if (f.endsWith('.jar')) cand.push(path.join(dir, sub, v, f)); } catch { /* a file */ } } } catch { /* no such folder */ }
+      }
+      for (const f of cand) { if (!fs.existsSync(f)) continue; const fmt = await noend.dataFormat(f); if (fmt) return { fmt, jar: f }; }
+      return null;
+    }
+    if (m === 'GET' && rest === 'gamerules') {
+      const g = await fresh(q('sync') === '1');
+      const era = gamerules.eraOf(inst && inst.version);
+      const nether = g.rules.find((x) => x.name === gamerules.NETHER);
+      return send(res, 200, {
+        running, version: (inst && inst.version) || null, era, available: g.exists, rules: g.rules, categories: gamerules.CATEGORIES,
+        nether: nether ? nether.value : null,
+        end: { locked: noend.installed(worldDir), tag: noend.TAG, supported: !!(await jarFormat()) },
+      }), true;
+    }
+    if (m === 'PUT' && rest === 'gamerules') {
+      const b = await readJson(req);
+      const name = String(b.name || '');
+      if (!gamerules.NAME_RE.test(name)) throw new HttpError(400, 'Ungültiger Name.');
+      const g = await fresh(false);
+      const rule = g.rules.find((x) => x.name === name);
+      if (!rule) throw new HttpError(404, g.exists ? 'Diese Spielregel gibt es in der Welt nicht.' : 'Für diese Welt gibt es noch keine Spielregel-Datei. Starte den Server einmal.');
+      let value;
+      try { value = gamerules.normalize(rule.type, b.value); } catch (e) { throw new HttpError(400, e.message); }
+      if (running) {
+        const text = await serverfiles.ask({ dir, send: sendCommand, command: `gamerule ${name} ${value}`, until: /Game rule \S+ is now set to|Incorrect argument|Expected|Unknown/, timeoutMs: 8000 });
+        if (!new RegExp(`Game rule ${name} is now set to`).test(text)) throw new HttpError(409, 'Der Server hat die Spielregel nicht angenommen.');
+        // so that the file, which other pages read, shows the new value too
+        await serverfiles.ask({ dir, send: sendCommand, command: 'save-all flush', until: /Saved the (?:game|world)/, timeoutMs: 15000 }).catch(() => null);
+      } else {
+        try { gamerules.writeRule(worldDir, name, value); } catch (e) { throw new HttpError(e.status || 500, e.message); }
+      }
+      return send(res, 200, { ok: true, name, value, running }), true;
+    }
+    if (m === 'PUT' && rest === 'gamerules/end') {
+      const b = await readJson(req);
+      const want = b.locked === true;
+      if (want) {
+        const f = await jarFormat();
+        let r;
+        try { r = await noend.install(worldDir, { jarFile: f ? f.jar : path.join(dir, 'server.jar') }); } catch (e) { throw new HttpError(e.status || 500, e.message); }
+        let active = null;
+        if (running) {
+          // "reload" finds the new pack and switches it on by itself (checked on a 26.3 server)
+          await serverfiles.ask({ dir, send: sendCommand, command: 'reload', until: /Reloading!/, timeoutMs: 8000 }).catch(() => null);
+          const t = await serverfiles.ask({ dir, send: sendCommand, command: 'datapack list enabled', until: /data pack\(s\) enabled/, timeoutMs: 8000 }).catch(() => null);
+          active = t ? t.includes(noend.PACK_ID) : null;
+        }
+        return send(res, 200, { ok: true, locked: true, active, running, spawn: r.spawn }), true;
+      }
+      if (running && noend.installed(worldDir)) await serverfiles.ask({ dir, send: sendCommand, command: `datapack disable "${noend.PACK_ID}"`, until: /Disabling data pack|already disabled|Unknown|Incorrect/, timeoutMs: 8000 }).catch(() => null);
+      try { await noend.remove(worldDir); } catch (e) { throw new HttpError(e.status || 500, e.message); }
+      if (running) await serverfiles.ask({ dir, send: sendCommand, command: 'reload', until: /Reloading!/, timeoutMs: 8000 }).catch(() => null);
+      return send(res, 200, { ok: true, locked: false, running }), true;
     }
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }
@@ -412,14 +487,7 @@ async function handle(c) {
     const dir = c.dir();
     const sid = String(server.server_id);
     const cfg = c.cfg ? c.cfg() : {};
-    const baseUrl = () => {
-      let b = String(cfg.packBaseUrl || '').trim();
-      let source = b ? 'packBaseUrl' : null;
-      if (!b && cfg.publicAddress) { b = String(cfg.publicAddress).trim(); source = 'publicAddress'; }
-      if (!b) return { url: '', source: null };
-      if (!/^https?:\/\//i.test(b)) b = 'http://' + b;
-      return { url: b.replace(/\/+$/, ''), source };
-    };
+    const baseUrl = () => packs.resolveBase(cfg, { mcPort: c.mcPort || null, packPort: c.packPort || null });
     const expectedFormat = async () => {
       const f = await packs.serverPackFormat(path.join(dir, software.jarNameOf(server)));
       return f ? { ...f, text: packs.describeFormats({ pack_format: f.format[1] ? f.format : f.format[0] }) } : null;
@@ -437,7 +505,7 @@ async function handle(c) {
       }
       return send(res, 200, {
         packs: l.packs, applied, expected: expected && { format: expected.format, text: expected.text, mc: expected.mc, style: expected.style },
-        base, current: cur, running: await isRunning(), frontPort: c.packPort || null, upstream: cfg.packUpstream || '', maxMb: Math.round(packs.MAX_PACK / 1048576),
+        base, current: cur, running: await isRunning(), frontPort: c.packPort || null, mcPort: c.mcPort || null, upstream: cfg.packUpstream || '', maxMb: Math.round(packs.MAX_PACK / 1048576),
       }), true;
     }
     if (m === 'PUT' && rest === 'packs/upload') {
@@ -486,7 +554,10 @@ async function handle(c) {
       const job = jobs.start('packs-check', sid, async (j) => {
         j.title = 'Download von außen testen';
         j.message = `Lade ${url} …`;
-        try { return { url, ...(await packs.checkUrl(url, ap.sha1)) }; } catch (e) { return { url, ok: false, error: e.message }; }
+        let r;
+        try { r = { url, ...(await packs.checkUrl(url, ap.sha1)) }; } catch (e) { r = { url, ok: false, error: e.message }; }
+        if (!r.ok && !r.sha1) Object.assign(r, await packs.diagnose(url, { file: ap.file, sha1: ap.sha1, mcPort: c.mcPort || null, packPort: c.packPort || null, error: r.error }));
+        return r;
       });
       job.title = 'Download von außen testen';
       return send(res, 202, { job: jobView(job) }), true;

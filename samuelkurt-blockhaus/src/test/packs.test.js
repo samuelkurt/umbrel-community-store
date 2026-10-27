@@ -365,3 +365,39 @@ test('end to end: published pack is downloadable through the pack server and the
     assert.equal(j2.result.ok, false); assert.ok(j2.result.error);
   } finally { front.close(); t.close(); }
 });
+
+test('pack address: a public address with the Minecraft port gets the pack port (direct port forwarding), other addresses stay', () => {
+  const rb = (cfg, o) => packs.resolveBase(cfg, o);
+  const own = { mcPort: 25565, packPort: 25700 };
+  // standalone, address carries the Minecraft port or none (= 25565): the download is on the pack port of the same host
+  for (const [addr, url] of [['mc.example.org:25565', 'http://mc.example.org:25700'], ['mc.example.org', 'http://mc.example.org:25700'], ['203.0.113.7:25565', 'http://203.0.113.7:25700'], ['http://mc.example.org:25565', 'http://mc.example.org:25700'], ['[2001:db8::1]:25565', 'http://[2001:db8::1]:25700']]) {
+    const r = rb({ publicAddress: addr }, own); assert.equal(r.url, url, addr); assert.equal(r.source, 'publicAddress+packPort'); assert.match(r.note, /Port 25700/);
+  }
+  // the server's own Minecraft port when it is not 25565
+  assert.equal(rb({ publicAddress: 'mc.example.org:25666' }, { mcPort: 25666, packPort: 25700 }).url, 'http://mc.example.org:25700');
+  // a tunnel address with another port (playit) is used as it is, as before
+  let r = rb({ publicAddress: 'abc.at.ply.gg:12345' }, own); assert.deepEqual([r.url, r.source, r.note], ['http://abc.at.ply.gg:12345', 'publicAddress', null]);
+  // an explicit download address always wins
+  r = rb({ publicAddress: 'mc.example.org:25565', packBaseUrl: 'https://packs.example.org/' }, own); assert.deepEqual([r.url, r.source], ['https://packs.example.org', 'packBaseUrl']);
+  // with Crafty (Minecraft port unknown) nothing changes
+  assert.equal(rb({ publicAddress: 'mc.example.org:25565' }, {}).url, 'http://mc.example.org:25565');
+  assert.deepEqual(rb({}, own), { url: '', source: null, note: null });
+});
+
+test('pack check: tells a closed port apart from a pack server that works locally, and names the Minecraft port as the wrong one', async () => {
+  const dir = tmpdir(); const file = `uuid-1-${'a'.repeat(40)}.zip`; fs.writeFileSync(path.join(dir, file), 'ZIP'.repeat(100));
+  const front = createPackFront({ publicDir: dir, upstream: () => '' });
+  await new Promise((r) => front.listen(0, '127.0.0.1', r));
+  const packPort = front.address().port;
+  const closed = await new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
+  try {
+    const sha = sha1(fs.readFileSync(path.join(dir, file)));
+    const good = `uuid-1-${sha}.zip`; fs.renameSync(path.join(dir, file), path.join(dir, good));
+    let d = await packs.diagnose(`http://127.0.0.1:${closed}/p/${good}`, { file: good, sha1: sha, mcPort: 25565, packPort });
+    assert.equal(d.local.ok, true); assert.match(d.hint, new RegExp(`Weiterleitung für Port ${closed}/TCP.*Port ${packPort}`));
+    d = await packs.diagnose(`http://example.org:25565/p/${good}`, { file: good, sha1: sha, mcPort: 25565, packPort });
+    assert.match(d.hint, /Minecraft-Port 25565.*Pack-Server \(Port \d+\)/);
+    d = await packs.diagnose(`http://127.0.0.1:${closed}/p/${good}`, { file: good, sha1: sha, mcPort: 25565, packPort: closed });
+    assert.equal(d.local.ok, false); assert.match(d.hint, /antwortet nicht einmal auf diesem Rechner/);
+  } finally { front.close(); front.closeAllConnections?.(); }
+});

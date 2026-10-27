@@ -160,11 +160,27 @@ async function page(token) {
     window.BH.refreshAnticheatBadge && window.BH.refreshAnticheatBadge();
   }
 
+  /** What the live item check costs: it asks 3 times per player and round, and the server writes each answer into latest.log. */
+  function liveItemNotice() {
+    const c = d.config;
+    if (!c.enabled || !c.checks.items) return null;
+    if (!c.checks.itemsLive) return h('div', { class: 'notice warn' }, 'Items live prüfen ist aus: neue Items fallen erst auf, wenn Minecraft die Spielerdatei schreibt (alle paar Minuten oder beim Verlassen des Spielers).');
+    const sec = c.thresholds.itemLiveSec; const st = d.status || {};
+    if (!d.running) return null;
+    const players = (d.players || []).filter((p) => p.online).length;
+    const perHour = Math.round(players * 3 * 3600 / sec);
+    return h('div', { class: 'notice' }, h('span', {},
+      `Items live prüfen: alle ${sec} s, jetzt ${players} online`,
+      st.itemLiveMs ? `, letzte Runde ${st.itemLiveMs} ms` : '',
+      `. Das schreibt etwa ${perHour.toLocaleString('de-DE')} Zeilen pro Stunde in die Server-Datei latest.log (nicht in die Konsole hier). Ein neues Item fällt nach höchstens ${sec} s auf. Mehr Abstand = weniger Log, später gemeldet.`));
+  }
+
   function paintBanner() {
     const c = d.counts;
     put(bannerBox,
       !d.config.enabled ? h('div', { class: 'notice warn' }, 'Der Anticheat ist ausgeschaltet. Es wird nichts aufgezeichnet.') : null,
       d.config.enabled && !d.running ? h('div', { class: 'notice' }, 'Der Server läuft nicht. Geprüft werden nur gespeicherte Daten (Spielerdaten, Statistiken, Mods).') : null,
+      liveItemNotice(),
       c.open ? h('div', { class: 'notice ' + (c.high ? 'err' : 'warn') },
         h('span', {}, h('b', {}, `${c.open} offene ${c.open === 1 ? 'Meldung' : 'Meldungen'}`), c.high ? ` – davon ${c.high} schwer.` : '.', ' Der Anticheat hat niemanden gekickt oder gewarnt; entscheide selbst.'),
         h('span', { class: 'row' }, h('button', { onclick: mut(async () => { await api('POST', A + '/ack', { all: true }); await reload(); }) }, 'Alle als gesehen markieren')))
@@ -284,7 +300,7 @@ async function page(token) {
     h('h2', {}, 'Was der Anticheat nicht sieht'),
     h('p', { class: 'small' }, 'Er arbeitet nur auf dem Server und sieht nicht, was der Client sendet. Deshalb erkennt er keine Reichweite, Killaura, Autoclicker, Scaffold, Nuker oder No-Fall, und er kann einen sauberen Cheater nicht von einem guten Spieler unterscheiden, wenn sich beide an die Server-Regeln halten.'),
     h('p', { class: 'small' }, h('b', {}, 'Clients: '), 'Welchen Client ein Spieler benutzt, kennt ein Vanilla-Server nicht (die Marke wird nicht ins Log geschrieben, und im Online-Modus ist sie verschlüsselt). Dafür gibt es hier bewusst keine Liste. Dasselbe gilt für Texturpakete, die ein Spieler selbst installiert hat: sichtbar ist nur das Paket, das der Server verteilt.'),
-    h('p', { class: 'small' }, h('b', {}, 'Server-Log: '), 'Die Positionsabfragen schreiben pro Spieler und Runde drei Zeilen (bei Verdacht mehr) in die Server-Datei latest.log. Sie fehlen in der Konsolen-Ansicht von Blockhaus, nicht aber in der Datei. Wer das nicht möchte, schaltet „Geschwindigkeit“ und „Fliegen“ aus; alle anderen Prüfungen fragen nichts ab.'));
+    h('p', { class: 'small' }, h('b', {}, 'Server-Log: '), 'Die Positionsabfragen schreiben pro Spieler und Runde drei Zeilen (eine mehr, wenn der Spieler gerade nicht am Boden steht, und bei Verdacht mehr) in die Server-Datei latest.log. Sie fehlen in der Konsolen-Ansicht von Blockhaus, nicht aber in der Datei. Wer das nicht möchte, schaltet „Geschwindigkeit“ und „Fliegen“ aus; alle anderen Prüfungen fragen nichts ab.'));
 
   put(main, header('Anticheat', 'Beobachtet und meldet. Es kickt, bannt oder warnt niemanden automatisch; Maßnahmen löst nur du per Knopf aus.'),
     bannerBox, stBox, playersBox, flagsBox, settingsBox, allowBox, limits, saveBox);

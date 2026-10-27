@@ -461,6 +461,53 @@ async function build(dataDir, sid, { patch = false, expected = null, job } = {})
   } finally { await fsp.rm(tmp, { force: true }); }
 }
 
+// ---- address players download from ---------------------------------------------------------------
+
+const MC_DEFAULT_PORT = 25565;
+
+/**
+ * The address the pack URL is built from. "Download-Adresse" (packBaseUrl) wins. Otherwise the public address is used; but when
+ * Blockhaus runs Minecraft itself (mcPort known), a public address that carries the Minecraft port (direct port forwarding: the
+ * default 25565 or the port of the server) cannot serve a download: Java answers nothing for HTTP there. The pack is served by
+ * Blockhaus on its own port, so the same host with that port is used. Addresses with another port (a playit tunnel pointed at
+ * the pack port, say) stay as they are.
+ * @returns {{url: string, source: string|null, note: string|null}}
+ */
+function resolveBase(cfg, { mcPort = null, packPort = null } = {}) {
+  let b = String(cfg.packBaseUrl || '').trim();
+  let source = b ? 'packBaseUrl' : null;
+  let note = null;
+  if (!b && cfg.publicAddress) {
+    b = String(cfg.publicAddress).trim(); source = 'publicAddress';
+    const m = /^(?:https?:\/\/)?(\[[^\]]+\]|[^:/\s]+)(?::(\d{1,5}))?$/i.exec(b);
+    if (m && mcPort && packPort && mcPort !== packPort) {
+      const port = m[2] ? Number(m[2]) : MC_DEFAULT_PORT;
+      if (port === mcPort || port === MC_DEFAULT_PORT) {
+        b = `${m[1]}:${packPort}`; source = 'publicAddress+packPort';
+        note = `Die öffentliche Adresse nennt den Minecraft-Port (${port}); dort läuft kein Download. Pakete kommen von Port ${packPort} (TCP), den du wie Minecraft freigeben musst. Eine andere Adresse trägst du unter Einstellungen → Texturpakete ein.`;
+      }
+    }
+  }
+  if (!b) return { url: '', source: null, note: null };
+  if (!/^https?:\/\//i.test(b)) b = 'http://' + b;
+  return { url: b.replace(/\/+$/, ''), source, note };
+}
+
+/** After a failed download test: does the pack server itself answer on this machine, and what does that say about the way from outside? */
+async function diagnose(url, { file, sha1, mcPort = null, packPort = null, error = '' }) {
+  let local = null;
+  if (packPort && file) {
+    try { const r = await checkUrl(`http://127.0.0.1:${packPort}/p/${file}`, sha1, { timeout: 8000 }); local = { ok: r.ok }; } catch (e) { local = { ok: false, error: e.message }; }
+  }
+  let port = null; try { const u = new URL(url); port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80); } catch { /* invalid */ }
+  let hint;
+  if (local && !local.ok) hint = `Der Pack-Server auf Port ${packPort} antwortet nicht einmal auf diesem Rechner${local.error ? ' (' + local.error + ')' : ''}. Läuft Blockhaus, und ist der Port frei?`;
+  else if (mcPort && packPort && mcPort !== packPort && port === mcPort) hint = `Die Adresse nutzt den Minecraft-Port ${mcPort}. Dort antwortet Minecraft, nicht der Pack-Server (Port ${packPort}). Trage unter Einstellungen → Texturpakete die Adresse mit Port ${packPort} ein.`;
+  else if (local && local.ok) hint = `Der Pack-Server antwortet auf diesem Rechner, aber nicht über ${url}. Meist fehlt die Weiterleitung für Port ${port || packPort}/TCP im Router (auf diesen Rechner, Port ${packPort}) oder eine Firewall blockt ihn. Manche Router lassen den Zugriff auf die eigene öffentliche Adresse von innen nicht zu: dann von außen testen (Handy über Mobilfunk).`;
+  else hint = null;
+  return { local, hint, port };
+}
+
 // ---- reachability check -------------------------------------------------------------------------
 
 /** Download `url` like a player's client would and compare the SHA-1. Used to test the whole tunnel. */
@@ -563,6 +610,6 @@ async function importUrl(dataDir, sid, url) {
 }
 
 module.exports = {
-  MAX_PACK, PUBLIC_RE, sidOf, paths, publicDir, readIndex, inspect, addPack, list, move, toggle, rename, remove, libFile,
+  resolveBase, diagnose, MAX_PACK, PUBLIC_RE, sidOf, paths, publicDir, readIndex, inspect, addPack, list, move, toggle, rename, remove, libFile,
   build, checkUrl, probeUrl, importUrl, serverPackFormat, compat, formatRange, metaProblems, mergeJson, patchFormat, describeFormats,
 };

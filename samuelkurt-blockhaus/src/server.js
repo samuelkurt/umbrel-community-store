@@ -27,7 +27,7 @@ const { HostStats } = require('./lib/hoststats');
 const { Terminals } = require('./lib/terminal');
 const ws = require('./lib/websocket');
 
-const VERSION = '0.7.5';
+const VERSION = '0.8.2';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -411,7 +411,7 @@ function createApp({ dataDir, serversDir, publicDir = path.join(__dirname, 'publ
       }
     }
 
-    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700, mode, voiceSuggested: local ? 24454 : 19132, anticheat });
+    const handled = await routes.handle({ req, res, url, method: m, rest, server, dir: () => dirFor(server), crafty, jobs, backups, dataDir, send, readJson, HttpError, readProps, cfg: () => config.get(), installFn: softwareInstall, pollMs: Math.max(5, Math.min(settleMs, 1500)), packPort: Number(process.env.PACK_PORT) || 25700, mcPort: local ? local.port : null, mode, voiceSuggested: local ? 24454 : 19132, anticheat });
     if (handled) return;
     throw new HttpError(404, 'Unbekannter Endpunkt.');
   }

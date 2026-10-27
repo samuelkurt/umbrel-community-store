@@ -9,7 +9,9 @@ const { spawn } = require('node:child_process');
 const mcping = require('../lib/mcping');
 
 const ts = () => new Date().toTimeString().slice(0, 8);
-const log = (m, lvl = 'INFO', th = 'Server thread') => process.stdout.write(`[${ts()}] [${th}/${lvl}]: ${m}\n`);
+// like the real server, every line also goes to logs/latest.log (the panel reads command answers from there)
+fs.mkdirSync('logs', { recursive: true }); fs.writeFileSync('logs/latest.log', '');
+const log = (m, lvl = 'INFO', th = 'Server thread') => { const line = `[${ts()}] [${th}/${lvl}]: ${m}\n`; process.stdout.write(line); try { fs.appendFileSync('logs/latest.log', line); } catch { /* folder gone */ } };
 const read = (f, d) => { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return d; } };
 
 let port = 25565; let max = 20;
@@ -19,7 +21,7 @@ m = /^max-players=(\d+)/m.exec(pr); if (m) max = Number(m[1]);
 if (!/eula\s*=\s*true/i.test(read('eula.txt', ''))) { log('You need to agree to the EULA in order to run the server. Go to eula.txt for more info.', 'WARN'); process.exit(1); }
 if (!pr) fs.writeFileSync('server.properties', `server-port=${port}\nmax-players=${max}\nlevel-name=world\nmotd=Fake\n`);
 fs.mkdirSync('world', { recursive: true });
-fs.writeFileSync('world/level.dat', 'x'.repeat(2048));
+if (!fs.existsSync('world/level.dat')) fs.writeFileSync('world/level.dat', 'x'.repeat(2048));
 
 const players = new Set();
 const pos = new Map(); // name -> [x, y, z]; set with `posset <name> x y z`, read with `data get entity <name> Pos`
@@ -65,6 +67,13 @@ process.stdin.on('data', (c) => {
     } else if (cmd === 'crash') { log('Encountered an unexpected exception', 'ERROR'); process.exit(3); }
     else if (cmd.startsWith('join ')) { const n = cmd.slice(5); players.add(n); log(`${n} joined the game`); }
     else if (cmd === 'save-all flush') { log('System chat: Saving the game (this may take a moment!)'); log('System chat: Saved the game'); }
+    else if (/^gamerule [a-z_]+ \S+$/.test(cmd)) { const [, n, v] = cmd.split(' '); log(`System chat: Game rule ${n} is now set to ${v}`); }
+    else if (cmd === 'reload') log('System chat: Reloading!');
+    else if (cmd === 'datapack list enabled') {
+      const on = fs.existsSync('world/datapacks/blockhaus_noend/pack.mcmeta') && !fs.existsSync('disabled-blockhaus_noend');
+      log(`System chat: There are ${on ? 2 : 1} data pack(s) enabled: [vanilla (built-in)]${on ? ', [file/blockhaus_noend (world)]' : ''}`);
+    }
+    else if (cmd.startsWith('datapack disable ')) { fs.writeFileSync('disabled-blockhaus_noend', '1'); log('System chat: Disabling data pack [file/blockhaus_noend (world)]'); }
     else if (cmd.startsWith('posset ')) { const [, n, x, y, z] = cmd.split(' '); pos.set(n, [Number(x), Number(y), Number(z)]); }
     else if (cmd.startsWith('data get entity ')) {
       const [n, p] = cmd.slice(16).split(' ');
