@@ -15,7 +15,11 @@ services:
     # docker stop sends SIGTERM; Blockhaus then tells Minecraft to save and stop. Give it time.
     stop_grace_period: 2m
     working_dir: /app
-    command: ["node", "/app/server.js"]
+    # The code is unpacked fresh at every start from hooks/blockhaus-src.tar.gz (umbrelOS copies hooks/ on every update, but
+    # never src/). /app is a tmpfs, so nothing stale can stay behind. No script has to be executable for this to work.
+    command: ["sh", "-c", "tar -xzf /hooks/blockhaus-src.tar.gz -C /app && exec node /app/server.js"]
+    tmpfs:
+      - /app
     environment:
       PORT: 3000
       DATA_DIR: /data
@@ -36,9 +40,8 @@ services:
       # Texture-pack download (see README). Not behind the Umbrel login on purpose.
       - "25701:25701"
     volumes:
-      # The panel's own code. umbrelOS does NOT copy src/ when the app is updated, so hooks/pre-start unpacks it from
-      # hooks/blockhaus-src.tar.gz before every start (hooks/ is copied on updates). Do not edit it by hand.
-      - ${APP_DATA_DIR}/src:/app:ro
+      # The panel's own code, as a tar.gz (unpacked into the tmpfs /app by the command above). Read-only.
+      - ${APP_DATA_DIR}/hooks:/hooks:ro
       # Settings, downloaded Java, server list.
       - ${APP_DATA_DIR}/data:/data
       # One subfolder per Minecraft server.

@@ -1,6 +1,6 @@
 'use strict';
 // umbrelOS copies only docker-compose.yml, hooks/ and umbrel-app.yml when an app is updated, never src/. Both apps therefore
-// carry the code as hooks/blockhaus-src.tar.gz and unpack it in hooks/pre-start. Run `node scripts/sync-solo.js` to refresh it.
+// carry the code as hooks/blockhaus-src.tar.gz; the container unpacks it into a tmpfs /app at every start. Run `node scripts/sync-solo.js` to refresh it.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -35,50 +35,27 @@ test('both apps and the server code agree on the version', { skip: !have }, () =
   for (const app of APPS) assert.equal(v(path.join(root, app, 'umbrel-app.yml')), code, app);
 });
 
-test('hooks/pre-start is executable (umbrelOS silently skips it otherwise) and the same in both apps', { skip: !have }, () => {
-  const files = APPS.map((n) => path.join(root, n, 'hooks', 'pre-start'));
-  for (const f of files) assert.ok(fs.statSync(f).mode & 0o100, `${f} must be executable (chmod +x)`);
-  assert.ok(fs.readFileSync(files[0]).equals(fs.readFileSync(files[1])));
-  assert.ok(fs.readFileSync(files[0], 'utf8').startsWith('#!/usr/bin/env bash\n'));
-});
-
-for (const withRsync of [true, false]) {
-  test(`hooks/pre-start unpacks the code into src/ (${withRsync ? 'rsync' : 'without rsync'}): fresh install, update over an old version, and a second start`, { skip: !have }, () => {
-    for (const app of APPS) {
-      const appDir = tmp(); fs.cpSync(path.join(root, app, 'hooks'), path.join(appDir, 'hooks'), { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
-      fs.chmodSync(path.join(appDir, 'hooks', 'pre-start'), 0o755);
-      let PATH = process.env.PATH;
-      if (!withRsync) {
-        const bin = tmp();
-        for (const c of ['bash', 'sed', 'head', 'tar', 'gzip', 'rm', 'mkdir', 'find', 'cp', 'chmod', 'dirname', 'env', 'cat']) {
-          const r = spawnSync('sh', ['-c', `command -v ${c}`], { encoding: 'utf8' }).stdout.trim();
-          if (r) fs.symlinkSync(r, path.join(bin, c));
-        }
-        PATH = bin;
-      }
-      const run = () => spawnSync(path.join(appDir, 'hooks', 'pre-start'), { env: { PATH }, encoding: 'utf8' });
-      const want = walk(a);
-      // fresh install: no src/ yet
-      let r = run(); assert.equal(r.status, 0, r.stderr + r.stdout);
-      assert.match(r.stdout, /Version \d+\.\d+\.\d+/);
-      assert.deepEqual(walkAll(path.join(appDir, 'src')), want, app);
-      // an old version: other files, a changed file, a leftover that no longer exists
-      fs.writeFileSync(path.join(appDir, 'src', 'lib', 'gone-in-new-version.js'), 'old');
-      fs.writeFileSync(path.join(appDir, 'src', 'server.js'), 'const VERSION = \'0.5.0\';');
-      fs.mkdirSync(path.join(appDir, 'src', 'old-dir')); fs.writeFileSync(path.join(appDir, 'src', 'old-dir', 'x'), 'x');
-      const inode = fs.statSync(path.join(appDir, 'src')).ino;
-      r = run(); assert.equal(r.status, 0, r.stderr);
-      assert.deepEqual(walkAll(path.join(appDir, 'src')), want, `${app}: stale files are gone`);
-      assert.ok(fs.readFileSync(path.join(appDir, 'src', 'server.js')).equals(fs.readFileSync(path.join(a, 'server.js'))));
-      assert.equal(fs.statSync(path.join(appDir, 'src')).ino, inode, 'same folder, so a running container keeps its mount');
-      assert.ok(!fs.readdirSync(appDir).some((n) => n.startsWith('.src-unpack')), 'no temp folder left');
-      // second start: nothing changes
-      r = run(); assert.equal(r.status, 0); assert.deepEqual(walkAll(path.join(appDir, 'src')), want);
-      // a broken archive must not wipe the working code
-      fs.writeFileSync(path.join(appDir, 'hooks', 'blockhaus-src.tar.gz'), 'kaputt');
-      r = run(); assert.notEqual(r.status, 0); assert.deepEqual(walkAll(path.join(appDir, 'src')), want, 'old code is kept');
-      fs.rmSync(path.join(appDir, 'hooks', 'blockhaus-src.tar.gz'));
-      r = run(); assert.notEqual(r.status, 0); assert.match(r.stderr, /fehlt/);
-    }
+for (const app of APPS) {
+  test(`${app}: the container unpacks hooks/blockhaus-src.tar.gz into a fresh /app at every start (no script, no executable bit needed)`, { skip: !have }, () => {
+    const text = fs.readFileSync(path.join(root, app, 'docker-compose.yml'), 'utf8');
+    const cmd = /command:\s*\["sh",\s*"-c",\s*"([^"]+)"\]/.exec(text);
+    assert.ok(cmd, 'command is sh -c "tar … && exec node …"');
+    assert.match(text, /\$\{APP_DATA_DIR\}\/hooks:\/hooks:ro/, 'hooks/ (which umbrelOS copies on updates) is mounted read-only');
+    assert.match(text, /tmpfs:\s*\n\s*-\s*\/app\b/, '/app is a tmpfs: nothing stale survives a restart');
+    assert.ok(!/\$\{APP_DATA_DIR\}\/src:/.test(text), 'src/ is not mounted any more (umbrelOS never updates it)');
+    assert.ok(!fs.existsSync(path.join(root, app, 'hooks', 'pre-start')), 'no host script (it needs the executable bit, which git and zip lose)');
+    // run the very command of the compose file, with the container paths pointed at a temp folder
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-cmd-'));
+    fs.mkdirSync(path.join(base, 'app'));
+    const line = cmd[1].replaceAll('/hooks/', path.join(root, app, 'hooks') + '/').replaceAll('/app', path.join(base, 'app')).replace(/exec node (\S+)/, "grep -m1 'const VERSION' $1");
+    const r = spawnSync('sh', ['-c', line], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const code = /const VERSION = '([^']+)'/.exec(fs.readFileSync(path.join(a, 'server.js'), 'utf8'))[1];
+    assert.match(r.stdout, new RegExp(`const VERSION = '${code}'`));
+    assert.deepEqual(walkAll(path.join(base, 'app')), walk(a), 'the unpacked code is exactly the code of Blockhaus');
+    // a broken archive stops the container (restart: on-failure shows it in the log) instead of starting old code
+    const bad = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-bad-')); fs.writeFileSync(path.join(bad, 'blockhaus-src.tar.gz'), 'kaputt');
+    const r2 = spawnSync('sh', ['-c', cmd[1].replaceAll('/hooks/', bad + '/').replaceAll('/app', path.join(base, 'app2')).replace(/exec node (\S+)/, 'echo started')], { encoding: 'utf8' });
+    assert.notEqual(r2.status, 0); assert.ok(!/started/.test(r2.stdout));
   });
 }

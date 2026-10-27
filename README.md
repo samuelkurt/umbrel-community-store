@@ -7,8 +7,11 @@ Three apps:
 - **Blockhaus** (`samuelkurt-blockhaus`): Aternos-style control panel for your Crafty Controller
   server (start/stop, console, log, options, players). See `samuelkurt-blockhaus/README.md`.
 - **Blockhaus Solo** (`samuelkurt-blockhaus-solo`): the same panel, but it runs Minecraft itself, so Crafty
-  Controller is not needed. See `samuelkurt-blockhaus-solo/README.md`. Its `src/` is a copy: after changing
-  `samuelkurt-blockhaus/src` run `node scripts/sync-solo.js`.
+  Controller is not needed. See `samuelkurt-blockhaus-solo/README.md`. Both apps carry the code as
+  `hooks/blockhaus-src.tar.gz` (umbrelOS copies only `docker-compose.yml`, `hooks/` and `umbrel-app.yml` on updates, never `src/`;
+  the container mounts `hooks/` and unpacks the archive into a tmpfs `/app` at every start, no script or executable bit involved).
+  After changing `samuelkurt-blockhaus/src` run `node scripts/sync-solo.js` and commit the two archives. A leftover
+  `samuelkurt-blockhaus-solo/src` folder in the repo is obsolete and should be deleted.
 
 The rest of this file is about the playit.gg app.
 
