@@ -14,6 +14,7 @@ const items = require('./items');
 const motion = require('./motion');
 const xray = require('./xray');
 const allow = require('./allow');
+const actions = require('./actions');
 const { Rates, isPrivateIp } = require('./rates');
 const { Store, normalizeConfig, DEFAULTS } = require('./store');
 
@@ -107,7 +108,7 @@ class Anticheat {
       s = {
         rates: new Rates(), asker: new Asker((cmd) => this.local.stdin(sid, cmd)), players: new Map(), ipNames: new Map(), lastPoll: 0, polling: false,
         lastFiles: 0, lastAllow: 0, wasOnline: false, seenDat: new Map(), seenStats: new Map(), tp: new Map(), leaveScanAt: 0,
-        lastRoundMs: 0, lastRoundPlayers: 0,
+        lastRoundMs: 0, lastRoundPlayers: 0, pendingDue: new Map(),
       };
       this.state.set(sid, s);
     }
@@ -165,6 +166,7 @@ class Anticheat {
       }
       case 'disconnecting': this._connection(sid, S, store, ev.ip, null, t); this._kickReason(sid, store, ev); break;
       case 'lost': this._kickReason(sid, store, ev); break;
+      case 'join': if (store.flags.some((f) => f.pending && lc(f.player) === lc(ev.name))) S.pendingDue.set(lc(ev.name), t + 4000); break;
       case 'leave': S.leaveScanAt = t + 3000; S.players.delete(lc(ev.name)); break;
       case 'teleported': S.tp.set(lc(ev.name), t); break;
       case 'chat': {
@@ -315,7 +317,7 @@ class Anticheat {
         if (cfg.checks.speed && st.dist > th.teleportBlocks) {
           const facts = await this._confirmFacts(sid, name);
           if (facts && !motion.excuse(facts)) {
-            this.flag(sid, 'teleport', { player: name, key: 'tp', message: `${name} sprang ${Math.round(st.dist)} Blöcke in ${st.dt.toFixed(1)} s`, evidence: { blocks: Math.round(st.dist), seconds: Math.round(st.dt * 10) / 10, from: [prev.x, prev.y, prev.z].map(Math.round), to: [cur.x, cur.y, cur.z].map(Math.round) } });
+            this.flag(sid, 'teleport', { player: name, key: 'tp', message: `${name} sprang ${Math.round(st.dist)} Blöcke in ${st.dt.toFixed(1)} s`, evidence: { dim: prev.dim || cur.dim, blocks: Math.round(st.dist), seconds: Math.round(st.dt * 10) / 10, from: [prev.x, prev.y, prev.z].map(Math.round), to: [cur.x, cur.y, cur.z].map(Math.round) } });
           }
           ps.strikes = 0;
         } else if (cfg.checks.speed && st.speed > th.speedBps) {
@@ -381,11 +383,14 @@ class Anticheat {
       S.seenDat.set(uuid, st.mtimeMs);
       let data; try { data = nbt.parse(fs.readFileSync(path.join(pd, f))).value; } catch { continue; }
       const name = names.get(uuid) || uuid.slice(0, 8);
+      const nameKnown = names.has(uuid);
       if (this.exempt(sid, name)) continue;
       if (store.config.skipCreative && data.playerGameType === 1) continue;
-      const raw = [...(Array.isArray(data.Inventory) ? data.Inventory : []), ...Object.values(data.equipment && typeof data.equipment === 'object' ? data.equipment : {}).filter((x) => x && x.id)];
+      const EQUIP = { feet: 100, legs: 101, chest: 102, head: 103, offhand: -106 };
+      const equip = data.equipment && typeof data.equipment === 'object' ? Object.entries(EQUIP).filter(([k]) => data.equipment[k] && data.equipment[k].id).map(([k, slot]) => ({ ...data.equipment[k], Slot: slot })) : [];
+      const raw = [...(Array.isArray(data.Inventory) ? data.Inventory : []), ...equip];
       for (const fnd of [...items.scan(raw, 'Inventar'), ...items.scan(data.EnderItems, 'Endertruhe')]) {
-        this.flag(sid, fnd.type, { player: name, key: fnd.key, message: `${name}: ${fnd.message}`, evidence: fnd.evidence });
+        this.flag(sid, fnd.type, { player: name, key: fnd.key, message: `${name}: ${fnd.message}`, evidence: { ...fnd.evidence, nameKnown, uuid } });
         n++;
       }
     }
@@ -436,6 +441,8 @@ class Anticheat {
 
   /** "Check now": everything that reads files, ignoring what was seen before. */
   async scanNow(sid) {
+    // the server only writes player data every few minutes; ask it to save so the check sees the current state
+    if (this.isOnline(sid)) { try { await this.local.stdin(sid, 'save-all flush'); await new Promise((r) => setTimeout(r, 1500)); } catch { /* not running */ } }
     const items_ = this.scanItems(sid, { force: true });
     const xray_ = this.scanXray(sid, { force: true });
     const allow_ = await this.scanAllow(sid);
@@ -461,6 +468,7 @@ class Anticheat {
         S.wasOnline = true; S.lastAllow = 0;
       }
       if (S.leaveScanAt && t >= S.leaveScanAt) { S.leaveScanAt = 0; try { this.scanItems(sid); this.scanXray(sid); } catch { /* ignore */ } }
+      for (const [n, due] of S.pendingDue) if (t >= due) { S.pendingDue.delete(n); this._runPending(sid, n).catch(() => {}); }
       if (t - S.lastFiles >= FILES_EVERY_MS) {
         S.lastFiles = t;
         try { this.scanItems(sid); this.scanXray(sid); } catch { /* ignore */ }
@@ -473,6 +481,36 @@ class Anticheat {
         this._poll(sid).catch(() => { S.polling = false; });
       }
       if (t - (S.gcAt || 0) > 60000) { S.gcAt = t; S.rates.gc(t, 24 * 3600 * 1000); for (const [ip, m] of S.ipNames) { for (const [n, ts] of m) if (t - ts > 24 * 3600 * 1000) m.delete(n); if (!m.size) S.ipNames.delete(ip); } }
+    }
+  }
+
+  // ---- manual actions (only ever started by an admin) ---------------------------------------------------------
+  async act(sid, id, action, text) {
+    const store = this.store(sid);
+    const flag = store.flags.find((f) => f.id === id);
+    if (!flag) throw Object.assign(new Error('Meldung nicht gefunden.'), { status: 404 });
+    const r = await actions.act(this, sid, flag, action, text);
+    if (r.pending) { store.update(id, { pending: action }); return { ok: true, pending: true, message: r.message }; }
+    this._done(store, flag, { action, ts: this.now(), note: r.note, backup: r.backup || null });
+    return { ok: true, message: r.message, restartNeeded: !!r.restartNeeded };
+  }
+
+  /** Remembers what an admin did with a flag (newest last) and marks it as seen. */
+  _done(store, flag, entry) {
+    store.update(flag.id, { pending: null, ack: true, resolved: entry, actions: [...(flag.actions || []), entry].slice(-10) });
+  }
+
+  async _runPending(sid, name) {
+    const store = this.store(sid);
+    for (const f of store.flags.filter((x) => x.pending && lc(x.player) === lc(name))) {
+      try {
+        const r = await actions.removeItem(this, sid, f);
+        this._done(store, f, { action: f.pending, ts: this.now(), note: r.note, backup: r.backup || null });
+      } catch (e) {
+        // the item moved or the player left again: keep it pending only if they were not online
+        const failed = { action: f.pending, ts: this.now(), note: 'Vorgemerktes Entfernen fehlgeschlagen: ' + e.message, failed: true };
+        store.update(f.id, { pending: null, resolved: failed, actions: [...(f.actions || []), failed].slice(-10) });
+      }
     }
   }
 

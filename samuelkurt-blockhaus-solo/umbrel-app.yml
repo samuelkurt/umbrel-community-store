@@ -4,7 +4,7 @@ name: Blockhaus Solo
 tagline: Run a Minecraft Java server on your Umbrel, no other app needed
 icon: https://raw.githubusercontent.com/samuelkurt/umbrel-community-store/main/samuelkurt-blockhaus-solo/icon.svg
 category: gaming
-version: "0.7.0"
+version: "0.7.1"
 port: 3989
 description: >-
   The German-language, Aternos-style Blockhaus panel with its own Minecraft
@@ -29,7 +29,7 @@ repo: https://github.com/samuelkurt/umbrel-community-store
 support: https://github.com/samuelkurt/umbrel-community-store/issues
 gallery: []
 releaseNotes: >-
-  0.7.0: new page "Anticheat". It only watches and reports, it never kicks, bans or warns anyone: impossible items (command blocks, bedrock, spawners, enchantments above vanilla maximum, also inside shulker boxes), speed and flying checks for online players, chat spam, connection floods, x-ray statistics, and optional allow-lists for mods/plugins and the server's texture pack. Warnings show on the page and as a counter in the menu. Operators are exempt by default. Not possible server-side: client detection (client brand), reach, killaura and other packet-level cheats. 0.6.0: the panel code now also supports a dedicated Debian server (own login, performance page with watts, terminal in the browser, installer in deploy/debian). All of that is switched off in this app, so it behaves as before; it only ships the shared code and a small xterm.js library. 0.5.0: first release. Same panel as Blockhaus, but it runs Minecraft itself (no Crafty Controller): create or take over servers, automatic Java download, start/stop with clean shutdown, optional autostart.
+  0.7.1: Anticheat: warnings now have manual buttons (never automatic): remove the item from the inventory, ender chest or armor slot (checked against the live slot, a copy is kept), warn, kick, ban, move a player back after a big jump, ban an address, disable a mod file. 0.7.0: new page "Anticheat". It only watches and reports, it never kicks, bans or warns anyone: impossible items (command blocks, bedrock, spawners, enchantments above vanilla maximum, also inside shulker boxes), speed and flying checks for online players, chat spam, connection floods, x-ray statistics, and optional allow-lists for mods/plugins and the server's texture pack. Warnings show on the page and as a counter in the menu. Operators are exempt by default. Not possible server-side: client detection (client brand), reach, killaura and other packet-level cheats. 0.6.0: the panel code now also supports a dedicated Debian server (own login, performance page with watts, terminal in the browser, installer in deploy/debian). All of that is switched off in this app, so it behaves as before; it only ships the shared code and a small xterm.js library. 0.5.0: first release. Same panel as Blockhaus, but it runs Minecraft itself (no Crafty Controller): create or take over servers, automatic Java download, start/stop with clean shutdown, optional autostart.
 dependencies: []
 path: ""
 defaultUsername: ""

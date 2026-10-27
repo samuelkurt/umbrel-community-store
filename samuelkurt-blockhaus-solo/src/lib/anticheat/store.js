@@ -117,7 +117,7 @@ class Store {
     let f = null;
     for (let i = this.flags.length - 1; i >= 0; i--) { if (same(this.flags[i]) && t - this.flags[i].last < windowMs) { f = this.flags[i]; break; } }
     if (f) {
-      if (t - f.last >= gapMs) { f.count += 1; f.ack = false; }
+      if (t - f.last >= gapMs) { f.count += 1; f.ack = false; f.resolved = null; }
       f.last = t; f.message = message; f.evidence = evidence; f.severity = severity;
       this._touch();
       return { flag: f, isNew: false };
@@ -132,6 +132,15 @@ class Store {
     }
     this._touch();
     return { flag: f, isNew: true };
+  }
+
+  /** Changes fields of one flag (used by the manual actions). */
+  update(id, patch) {
+    const f = this.flags.find((x) => x.id === id);
+    if (!f) return null;
+    Object.assign(f, patch);
+    this._touch();
+    return f;
   }
 
   ack({ id, player, all }) {

@@ -1,6 +1,6 @@
 (() => {
 'use strict';
-// Page "Anticheat": warnings, players with points, settings, allow-lists. It only shows what the server recorded; nothing here acts on players.
+// Page "Anticheat": warnings, players with points, settings, allow-lists. Nothing happens by itself: the buttons on a warning (remove item, kick, ban …) only act when an admin clicks and confirms.
 const { h, put, api, toast, S, P, header, every, getToken, main } = window.BH;
 
 const TYPES = {
@@ -9,6 +9,22 @@ const TYPES = {
   speed: 'Zu schnell', teleport: 'Großer Sprung', fly: 'Fliegen / Schweben', xray: 'X-Ray-Hinweis', flood: 'Verbindungsflut', 'many-names': 'Viele Namen pro Adresse',
   'mod-unknown': 'Mod/Plugin nicht erlaubt', 'mod-changed': 'Mod/Plugin geändert', 'pack-unknown': 'Texturpaket nicht erlaubt',
 };
+const ITEM_TYPES = ['illegal-item', 'over-enchant', 'over-stack', 'unbreakable', 'custom-attr'];
+const SLOT_NAMES = { 100: 'Füße', 101: 'Beine', 102: 'Brust', 103: 'Kopf', '-106': 'Zweithand' };
+const slotText = (ev) => (ev.container === 'ender' ? `Endertruhe, Platz ${ev.slot}` : SLOT_NAMES[ev.slot] ? `Rüstung/Hand (${SLOT_NAMES[ev.slot]})` : `Inventar, Platz ${ev.slot}`);
+/** Which buttons a warning gets. [action, label, kind] */
+function actionsFor(f) {
+  const ev = f.evidence || {};
+  const out = [];
+  const named = f.player && ev.nameKnown !== false;
+  const did = (a) => (f.actions || []).some((x) => x.action === a && !x.failed);
+  if (ITEM_TYPES.includes(f.type) && !did('remove-item') && !f.pending && named && ev.slot !== undefined && ev.slot !== null) out.push(['remove-item', ev.nested ? 'Behälter entfernen' : 'Item entfernen', 'primary']);
+  if (f.type === 'teleport' && named && Array.isArray(ev.from)) out.push(['tp-back', 'Zurücksetzen', '']);
+  if (['mod-unknown', 'mod-changed'].includes(f.type) && !did('mod-disable') && ev.file && !String(ev.file).endsWith('.disabled')) out.push(['mod-disable', 'Mod abschalten', '']);
+  if (named) out.push(['tell', 'Verwarnen', ''], ['kick', 'Kicken', ''], ['ban', 'Bannen', 'danger']);
+  if (ev.ip) out.push(['ban-ip', 'Adresse sperren', 'danger']);
+  return out;
+}
 const LEVEL = { ok: ['in Ordnung', ''], warn: ['auffällig', 'warn'], high: ['hoch', 'err'] };
 const SEV = { info: 'Info', warn: 'Warnung', high: 'Schwer' };
 
@@ -56,6 +72,22 @@ async function page(token) {
   let cfg = JSON.parse(JSON.stringify(d.config));
   let dirty = false;
   let filter = { type: '', player: '', open: true };
+  async function doAct(f, action) {
+    const ev = f.evidence || {};
+    let text = '';
+    if (action === 'remove-item') {
+      const what = ev.nested ? `den ganzen Behälter ${ev.topId} (darin liegt ${ev.item})` : String(ev.item || ev.topId);
+      if (!confirm(`${f.player}: ${what} aus „${slotText(ev)}“ entfernen?\n\nDas Item verschwindet endgültig aus dem Spiel. Eine Kopie (NBT) bleibt in den Details der Meldung. Ist der Spieler offline, wird es beim nächsten Beitritt entfernt.`)) return;
+    } else if (action === 'kick') { text = prompt(`${f.player} kicken. Grund (sieht der Spieler):`, 'Vom Server-Admin entfernt'); if (text === null) return; }
+    else if (action === 'ban') { text = prompt(`${f.player} BANNEN (bis du ihn in der Spielerliste entsperrst). Grund:`, 'Verstoß gegen die Serverregeln'); if (text === null) return; }
+    else if (action === 'tell') { text = prompt(`Nachricht an ${f.player}:`, 'Bitte lass solche Dinge. Der Server protokolliert das.'); if (!text) return; }
+    else if (action === 'tp-back') { if (!confirm(`${f.player} zurück nach ${ev.from.join(' ')} (${ev.dim}) setzen?`)) return; }
+    else if (action === 'ban-ip') { if (!confirm(`Adresse ${ev.ip} sperren?\n\nAchtung: Hinter derselben Adresse können mehrere Personen sitzen (Heimnetz).`)) return; text = 'Anticheat: Verbindungsflut'; }
+    else if (action === 'mod-disable') { if (!confirm(`${ev.file} abschalten? Die Datei bekommt die Endung .disabled; der Server muss neu starten.`)) return; }
+    const r = await api('POST', A + '/act', { id: f.id, action, text });
+    toast(r.message + (r.restartNeeded ? ' Neustart nötig.' : ''));
+    await reload();
+  }
   const mut = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 
   const bannerBox = h('div', {});
@@ -117,7 +149,11 @@ async function page(token) {
         h('span', { class: 'chip ' + (f.severity === 'high' ? 'warn' : f.severity === 'warn' ? 'warn' : ''), title: 'Schweregrad' }, SEV[f.severity] || f.severity),
         h('div', { class: 'nm' }, h('b', {}, TYPES[f.type] || f.type), f.count > 1 ? ` ×${f.count}` : '', ' – ', f.message,
           h('small', {}, `${when(f.last)} (${ago(f.last)})${f.player ? '' : ' · betrifft den Server'}`),
-          h('details', {}, h('summary', { class: 'muted small' }, 'Details'), h('pre', { class: 'code' }, JSON.stringify({ erstmals: when(f.ts), ...f.evidence }, null, 1)))),
+          (f.actions || []).map((a) => h('small', { class: a.failed ? 'err' : '' }, `${a.failed ? '✗' : '✓'} ${a.note} (${when(a.ts)})`)),
+          f.pending ? h('small', {}, '⏳ Vorgemerkt: wird beim nächsten Beitritt des Spielers ausgeführt.') : null,
+          actionsFor(f).length ? h('span', { class: 'row', style: 'margin-top:6px;gap:6px;flex-wrap:wrap' }, actionsFor(f).map(([a, label, kind]) =>
+            h('button', { class: 'small ' + kind, onclick: mut(() => doAct(f, a)) }, label))) : null,
+          h('details', {}, h('summary', { class: 'muted small' }, 'Details'), h('pre', { class: 'code' }, JSON.stringify({ erstmals: when(f.ts), ...f.evidence, ...((f.actions || []).length ? { aktionen: f.actions } : {}) }, null, 1)))),
         f.ack ? h('span', { class: 'chip' }, 'gesehen') : h('button', { class: 'small', onclick: mut(async () => { await api('POST', A + '/ack', { id: f.id }); await reload(); }) }, 'Gesehen'))))
         : h('div', { class: 'empty' }, d.flags.length ? 'Keine Meldungen mit diesem Filter.' : 'Keine Meldungen.'),
       d.flags.length ? h('div', { class: 'row', style: 'margin-top:10px' },
@@ -146,7 +182,7 @@ async function page(token) {
   function paintSettings() {
     put(settingsBox, h('div', { class: 'card' },
       h('h2', {}, 'Einstellungen'),
-      h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Anticheat eingeschaltet'), h('small', {}, 'Er beobachtet und meldet nur. Kein Kick, kein Bann, keine Nachricht an Spieler.')), sw(() => cfg.enabled, (v) => { cfg.enabled = v; }, 'Anticheat eingeschaltet')),
+      h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Anticheat eingeschaltet'), h('small', {}, 'Er beobachtet und meldet; von selbst kickt, bannt oder warnt er niemanden. Maßnahmen löst nur du per Knopf an einer Meldung aus.')), sw(() => cfg.enabled, (v) => { cfg.enabled = v; }, 'Anticheat eingeschaltet')),
       h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Operatoren ausnehmen'), h('small', {}, 'Operatoren (ops.json) werden weder abgefragt noch gemeldet.')), sw(() => cfg.exemptOps, (v) => { cfg.exemptOps = v; }, 'Operatoren ausnehmen')),
       h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Spieler im Kreativmodus bei Items überspringen'), h('small', {}, 'Im Kreativmodus gibt es alle Items legal.')), sw(() => cfg.skipCreative, (v) => { cfg.skipCreative = v; }, 'Kreativ überspringen')),
       h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, 'Private Adressen bei „Namen pro Adresse“ ignorieren'), h('small', {}, 'Heimnetz und Tunnel zeigen oft für alle dieselbe Adresse.')), sw(() => cfg.ignorePrivateIps, (v) => { cfg.ignorePrivateIps = v; }, 'Private Adressen ignorieren')),
@@ -175,7 +211,7 @@ async function page(token) {
     const packOk = p.current.sha1 && cfg.allow.packs.entries.some((e) => e.sha1 === p.current.sha1);
     put(allowBox, h('div', { class: 'card' },
       h('h2', {}, 'Erlaubt-Listen'),
-      h('p', { class: 'muted small' }, 'Alles Unbekannte wird nur als Meldung aufgeführt. Es wird nichts entfernt oder abgeschaltet. Zum Erlauben: „Aktuellen Stand übernehmen“ (merkt sich Dateiname und SHA-256).'),
+      h('p', { class: 'muted small' }, 'Alles Unbekannte wird nur als Meldung aufgeführt. Von selbst wird nichts entfernt oder abgeschaltet (an der Meldung gibt es dafür einen Knopf). Zum Erlauben: „Aktuellen Stand übernehmen“ (merkt sich Dateiname und SHA-256).'),
       h('div', { class: 'opt' }, h('div', { class: 'txt' }, h('b', {}, m.kind === 'plugin' ? 'Plugins prüfen' : 'Mods prüfen'), h('small', {}, m.folder ? `Ordner „${m.folder}“, ${m.current.length} aktive Dateien.` : (m.reason || 'Dieser Server kann keine Mods oder Plugins laden.'))),
         sw(() => cfg.allow.mods.enabled, (v) => { cfg.allow.mods.enabled = v; }, 'Mods prüfen')),
       m.current.length ? h('ul', { class: 'plist' }, m.current.map((it) => { const [lab, cls] = status(it); return h('li', {}, h('div', { class: 'nm' }, it.file, h('small', {}, it.sha256.slice(0, 16) + '…')), h('span', { class: 'chip ' + (cls === 'on' ? 'on' : 'warn') }, lab)); })) : null,
@@ -193,7 +229,7 @@ async function page(token) {
     h('p', { class: 'small' }, h('b', {}, 'Clients: '), 'Welchen Client ein Spieler benutzt, kennt ein Vanilla-Server nicht (die Marke wird nicht ins Log geschrieben, und im Online-Modus ist sie verschlüsselt). Dafür gibt es hier bewusst keine Liste. Dasselbe gilt für Texturpakete, die ein Spieler selbst installiert hat: sichtbar ist nur das Paket, das der Server verteilt.'),
     h('p', { class: 'small' }, h('b', {}, 'Server-Log: '), 'Die Positionsabfragen schreiben pro Spieler und Runde drei Zeilen (bei Verdacht mehr) in die Server-Datei latest.log. Sie fehlen in der Konsolen-Ansicht von Blockhaus, nicht aber in der Datei. Wer das nicht möchte, schaltet „Geschwindigkeit“ und „Fliegen“ aus; alle anderen Prüfungen fragen nichts ab.'));
 
-  put(main, header('Anticheat', 'Beobachtet und meldet. Es kickt, bannt oder warnt niemanden automatisch.'),
+  put(main, header('Anticheat', 'Beobachtet und meldet. Es kickt, bannt oder warnt niemanden automatisch; Maßnahmen löst nur du per Knopf aus.'),
     bannerBox, playersBox, flagsBox, settingsBox, allowBox, limits, saveBox);
   paintBanner(); paintPlayers(); paintFlags(); paintSettings(); paintSave(); paintAllow();
   loadAllow();

@@ -362,6 +362,11 @@ async function handle(c) {
       const n = ac.store(sid).clear({ all: b.all === true, acked: b.acked === true, player: b.player === undefined ? undefined : String(b.player) });
       return send(res, 200, { ok: true, removed: n }), true;
     }
+    if (m === 'POST' && rest === 'anticheat/act') {
+      const b = await readJson(req);
+      try { return send(res, 200, await ac.act(sid, String(b.id || ''), String(b.action || ''), b.text === undefined ? '' : String(b.text))), true; }
+      catch (e) { if (e.status) throw new HttpError(e.status, e.message); throw e; }
+    }
     if (m === 'POST' && rest === 'anticheat/scan') return send(res, 200, { ok: true, ...(await ac.scanNow(sid)) }), true;
     if (m === 'GET' && rest === 'anticheat/allow') return send(res, 200, await ac.allowView(sid)), true;
     if (m === 'POST' && rest === 'anticheat/allow/snapshot') {

@@ -71,33 +71,37 @@ function nested(raw) {
   return out.filter((x) => x && x.id);
 }
 
-function scan(rawItems, where = 'Inventar', depth = 0) {
+function scan(rawItems, where = 'Inventar', depth = 0, parent = null) {
   const out = [];
   for (const raw of Array.isArray(rawItems) ? rawItems : []) {
     if (!raw || !raw.id) continue;
+    const it0 = inventory.normalizeItem(raw);
+    // where the top-level stack lives (what an admin can act on); items inside a shulker box belong to the box
+    const ctx = parent || { container: /^Endertruhe/.test(where) ? 'ender' : 'inventory', slot: it0.slot, topId: bare(raw.id) };
     if (depth < 3) {
       const inner = nested(raw);
-      if (inner.length) out.push(...scan(inner, `${where} › ${bare(raw.id)}`, depth + 1));
+      if (inner.length) out.push(...scan(inner, `${where} › ${bare(raw.id)}`, depth + 1, ctx));
     }
-    const it = inventory.normalizeItem(raw);
+    const it = it0;
     const id = bare(it.id);
     const label = it.name ? `${id} („${it.name}“)` : id;
-    const ev = { item: id, slot: it.slot, count: it.count, where };
+    const loc = `${ctx.container}${ctx.slot}${depth ? '+' : ''}`;
+    const ev = { item: id, slot: ctx.slot, container: ctx.container, topId: ctx.topId, nested: depth > 0, count: it.count, where };
     if (ILLEGAL.has(id) || ILLEGAL_RE.test(id)) {
-      out.push({ key: `illegal:${id}`, type: 'illegal-item', message: `${where}: ${label} gibt es im Überlebensmodus nicht`, evidence: ev });
+      out.push({ key: `illegal:${id}@${loc}`, type: 'illegal-item', message: `${where}: ${label} gibt es im Überlebensmodus nicht`, evidence: ev });
     }
     for (const e of [...it.enchants, ...it.storedEnchants]) {
       const max = MAX_LEVEL[bare(e.id)];
       if (max !== undefined && e.level > max) {
-        out.push({ key: `ench:${id}:${bare(e.id)}`, type: 'over-enchant', message: `${where}: ${label} mit ${bare(e.id)} ${e.level} (Maximum ${max})`, evidence: { ...ev, enchant: bare(e.id), level: e.level, max } });
+        out.push({ key: `ench:${id}:${bare(e.id)}@${loc}`, type: 'over-enchant', message: `${where}: ${label} mit ${bare(e.id)} ${e.level} (Maximum ${max})`, evidence: { ...ev, enchant: bare(e.id), level: e.level, max } });
       }
     }
     const max = maxStack(id);
     if (Number.isFinite(it.count) && it.count > max) {
-      out.push({ key: `stack:${id}`, type: 'over-stack', message: `${where}: ${it.count}× ${label} in einem Stapel (Maximum ${max})`, evidence: { ...ev, max } });
+      out.push({ key: `stack:${id}@${loc}`, type: 'over-stack', message: `${where}: ${it.count}× ${label} in einem Stapel (Maximum ${max})`, evidence: { ...ev, max } });
     }
     for (const o of oddComponents(raw)) {
-      out.push({ key: `${o.kind}:${id}`, type: o.kind === 'unbreakable' ? 'unbreakable' : 'custom-attr', message: `${where}: ${label} ist ${o.text}`, evidence: ev });
+      out.push({ key: `${o.kind}:${id}@${loc}`, type: o.kind === 'unbreakable' ? 'unbreakable' : 'custom-attr', message: `${where}: ${label} ist ${o.text}`, evidence: ev });
     }
   }
   return out;
