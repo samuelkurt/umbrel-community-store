@@ -10,9 +10,9 @@ const DEFAULTS = {
   exempt: [],
   skipCreative: true,
   ignorePrivateIps: true,
-  checks: { items: true, vanillaWarnings: true, flood: true, spam: true, xray: true, speed: true, fly: true, mods: true, packs: true },
+  checks: { items: true, itemsLive: true, vanillaWarnings: true, flood: true, spam: true, xray: true, speed: true, fly: true, mods: true, packs: true },
   thresholds: {
-    pollSec: 5, speedBps: 12, speedStrikes: 2, teleportBlocks: 100, flyOffGroundSamples: 4,
+    pollSec: 5, itemLiveSec: 10, speedBps: 12, speedStrikes: 2, teleportBlocks: 100, flyOffGroundSamples: 4,
     vanillaWarnCount: 5, floodJoins: 8, floodWindowS: 30, namesPerIp: 4,
     chatPer10s: 8, cmdPer10s: 12, repeatMsgs: 4, xrayMinOre: 15, xrayRatio: 0.04,
     warnPoints: 5, highPoints: 15, halfLifeMin: 30,
@@ -25,7 +25,7 @@ const DEFAULTS = {
 };
 
 const RANGE = {
-  pollSec: [2, 60], speedBps: [6, 100], speedStrikes: [1, 10], teleportBlocks: [20, 5000], flyOffGroundSamples: [2, 30],
+  pollSec: [2, 60], itemLiveSec: [3, 300], speedBps: [6, 100], speedStrikes: [1, 10], teleportBlocks: [20, 5000], flyOffGroundSamples: [2, 30],
   vanillaWarnCount: [1, 100], floodJoins: [2, 200], floodWindowS: [5, 600], namesPerIp: [2, 50],
   chatPer10s: [2, 100], cmdPer10s: [2, 100], repeatMsgs: [2, 50], xrayMinOre: [1, 500], xrayRatio: [0.005, 0.5],
   warnPoints: [1, 1000], highPoints: [2, 5000], halfLifeMin: [1, 10080],

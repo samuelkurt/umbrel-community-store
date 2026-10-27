@@ -113,7 +113,7 @@ class Anticheat {
       s = {
         rates: new Rates(), asker: new Asker((cmd) => this.local.stdin(sid, cmd)), players: new Map(), ipNames: new Map(), lastPoll: 0, polling: false,
         lastFiles: 0, lastAllow: 0, wasOnline: false, seenDat: new Map(), seenStats: new Map(), tp: new Map(), leaveScanAt: 0,
-        lastRoundMs: 0, lastRoundPlayers: 0, pendingDue: new Map(),
+        lastRoundMs: 0, lastRoundPlayers: 0, pendingDue: new Map(), itemPolling: false, lastItemLive: 0, itemLiveMs: 0,
       };
       this.state.set(sid, s);
     }
@@ -306,6 +306,35 @@ class Anticheat {
     }
   }
 
+  /**
+   * Items, live: asks every online player's inventory, ender chest and equipment from the server, so an illegal item is found
+   * within seconds instead of when Minecraft next writes the player file (every few minutes, or when the player leaves).
+   */
+  async _itemPoll(sid) {
+    const S = this.S(sid);
+    const store = this.store(sid);
+    S.itemPolling = true;
+    const t0 = this.now();
+    try {
+      const names = this.onlineNames(sid).filter((n) => NAME_RE.test(n) && !this.exempt(sid, n)).slice(0, MAX_POLLED);
+      for (const name of names) {
+        if (!this.isOnline(sid) || !store.config.enabled || !store.config.checks.items || !store.config.checks.itemsLive) break;
+        const live = await this.liveFindings(sid, name, { priority: false });
+        if (!live || !live.findings.length) continue;
+        if (store.config.skipCreative) {
+          const gm = await this.query(sid, name, 'playerGameType');
+          if (!gm) continue; // not answered: do not judge a player whose mode is unknown
+          if (!gm.none && parseInt(gm.value, 10) === 1) continue;
+        }
+        for (const fnd of live.findings) this.flag(sid, fnd.type, { player: name, key: fnd.key, message: `${name}: ${fnd.message}`, evidence: { ...fnd.evidence, nameKnown: true, live: true } });
+      }
+    } finally {
+      S.itemPolling = false;
+      S.lastItemLive = this.now();
+      S.itemLiveMs = S.lastItemLive - t0;
+    }
+  }
+
   async _judge(sid, S, store, name, cur) {
     const cfg = store.config;
     const th = cfg.thresholds;
@@ -395,9 +424,9 @@ class Anticheat {
   }
 
   /** Asks the server what the player carries right now (Inventory, EnderItems, equipment). null if it did not answer in time. */
-  async liveFindings(sid, name) {
+  async liveFindings(sid, name, { priority = true } = {}) {
     const get = async (p) => {
-      const r = await this.query(sid, name, p, { priority: true, timeout: ADMIN_ASK_MS });
+      const r = await this.query(sid, name, p, priority ? { priority: true, timeout: ADMIN_ASK_MS } : {});
       if (!r || r.offline) return null;
       if (r.none) return { value: null };
       try { return { value: nbt.parseSnbt(r.value) }; } catch { return null; }
@@ -531,6 +560,10 @@ class Anticheat {
         S.lastAllow = t;
         this.scanAllow(sid).catch(() => {});
       }
+      if (online && store.config.checks.items && store.config.checks.itemsLive && !S.itemPolling && t - S.lastItemLive >= th.itemLiveSec * 1000) {
+        S.lastItemLive = t;
+        this._itemPoll(sid).catch(() => { S.itemPolling = false; });
+      }
       if (online && !S.polling && (store.config.checks.speed || store.config.checks.fly) && t - S.lastPoll >= th.pollSec * 1000) {
         this._poll(sid).catch(() => { S.polling = false; });
       }
@@ -596,7 +629,7 @@ class Anticheat {
     const flags = store.flags.filter((f) => !f.selftest).sort((a, b) => b.last - a.last).slice(0, 600);
     return {
       available: true, config: store.config, defaults: DEFAULTS, running: this.isOnline(sid), counts: store.openCount(), players, known, flags,
-      status: { lastPoll: S.lastPoll, polledPlayers: S.lastRoundPlayers, roundMs: S.lastRoundMs, queries: S.asker.sent, lastFiles: S.lastFiles, lastAllow: S.lastAllow },
+      status: { lastItemLive: S.lastItemLive, itemLiveMs: S.itemLiveMs, lastPoll: S.lastPoll, polledPlayers: S.lastRoundPlayers, roundMs: S.lastRoundMs, queries: S.asker.sent, lastFiles: S.lastFiles, lastAllow: S.lastAllow },
     };
   }
 

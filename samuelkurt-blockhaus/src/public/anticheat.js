@@ -29,7 +29,8 @@ const LEVEL = { ok: ['in Ordnung', ''], warn: ['auffällig', 'warn'], high: ['ho
 const SEV = { info: 'Info', warn: 'Warnung', high: 'Schwer' };
 
 const CHECKS = [
-  ['items', 'Items prüfen', 'Unmögliche Items (Bedrock, Befehlsblöcke, Spawner, Spawn-Eier …), zu hohe Verzauberungen, zu große Stapel, unzerbrechliche Gegenstände. Liest die gespeicherten Spielerdaten, also ohne Abfragen. Neue Daten gibt es beim Speichern (alle paar Minuten) und beim Verlassen.'],
+  ['items', 'Items prüfen', 'Unmögliche Items (Bedrock, Befehlsblöcke, Spawner, Spawn-Eier …), zu hohe Verzauberungen, zu große Stapel, unzerbrechliche Gegenstände. Liest die gespeicherten Spielerdaten (neue Daten gibt es beim Speichern, alle paar Minuten, und beim Verlassen).'],
+  ['itemsLive', 'Items live prüfen (schnell)', 'Fragt das Inventar, die Endertruhe und die Ausrüstung jedes Online-Spielers alle paar Sekunden beim Server ab, damit ein unmögliches Item sofort auffällt statt erst beim Speichern. Schreibt pro Spieler und Runde drei Zeilen ins Server-Log (latest.log); in der Konsolen-Ansicht von Blockhaus fehlen sie. Ohne diese Option bleibt nur die Dateiprüfung.'],
   ['vanillaWarnings', 'Warnungen des Servers zählen', '„moved too quickly“ und „moved wrongly“ aus dem Server-Log, wenn sie sich häufen, dazu Kicks wegen Schwebens. Ohne Abfragen.'],
   ['flood', 'Verbindungsflut und Namen pro Adresse', 'Viele Verbindungsversuche von einer Adresse in kurzer Zeit, viele verschiedene Namen von einer öffentlichen Adresse. Es wird nur gemeldet, nichts gesperrt.'],
   ['spam', 'Chat- und Befehls-Spam', 'Zu viele oder immer gleiche Nachrichten. Befehle sieht nur ein Server, der sie loggt (Vanilla tut das nicht).'],
@@ -40,7 +41,8 @@ const CHECKS = [
   ['packs', 'Texturpaket gegen die Erlaubt-Liste', 'Nur aktiv, wenn die Liste unten eingeschaltet ist.'],
 ];
 const NUMS = [
-  ['pollSec', 'Abfrage-Abstand (s)', 'Wie oft Online-Spieler abgefragt werden.'],
+  ['pollSec', 'Abfrage-Abstand (s)', 'Wie oft Online-Spieler nach Position abgefragt werden.'],
+  ['itemLiveSec', 'Live-Item-Prüfung alle (s)', 'Wie oft das Inventar jedes Online-Spielers abgefragt wird. Kleiner = schneller, aber mehr Zeilen im Server-Log.'],
   ['speedBps', 'Höchstgeschwindigkeit (Blöcke/s)', 'Zu Fuß rennen sind etwa 5,6; Sprinten mit Sprung bis 8. Mit Speed-Trank wird die Grenze automatisch höher.'],
   ['speedStrikes', 'Wie oft hintereinander zu schnell', 'So viele Abfragen in Folge müssen über der Grenze liegen.'],
   ['teleportBlocks', 'Sprung ab (Blöcke)', 'Distanz zwischen zwei Abfragen, ab der ein „Sprung“ gemeldet wird. Ein Tod mit Respawn kann so aussehen.'],

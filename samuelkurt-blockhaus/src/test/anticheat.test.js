@@ -666,6 +666,52 @@ async function waitFor(fn, ms = 8000, what = 'condition') {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timeout waiting for ' + what); await sleep(30); }
 }
 
+test('items live: a spawner given just now is found by the next live check, without saving or leaving', async () => {
+  const r = rig();
+  try {
+    fs.writeFileSync(path.join(r.dir, 'ops.json'), JSON.stringify([{ uuid: 'x', name: 'Boss', level: 4 }]));
+    const spawner = () => new Map([['Inventory[{Slot:7b}]', { id: 'minecraft:spawner' }], ['EnderItems[{Slot:1b}]', { id: 'minecraft:diamond' }]]);
+    r.add('Cheater', { items: spawner() }); r.add('Creative', { items: spawner(), mode: 1 }); r.add('Boss', { items: spawner() }); r.add('Clean', { items: new Map([['Inventory[{Slot:0b}]', { id: 'minecraft:diamond_sword' }]]) });
+    r.online('Cheater', 'Creative', 'Boss', 'Clean');
+    // nothing was ever saved: the file scan sees nothing, only the live check can find it
+    r.ac.scanItems('s1'); assert.equal(r.flags('illegal-item').length, 0);
+    await r.ac._itemPoll('s1');
+    const fl = r.flags('illegal-item');
+    assert.deepEqual(fl.map((f) => f.player), ['Cheater'], 'creative, operators and clean players are not flagged');
+    assert.match(fl[0].message, /Spawner/i); assert.equal(fl[0].evidence.slot, 7); assert.equal(fl[0].evidence.container, 'inventory');
+    // routine polling never jumps ahead of admin actions
+    assert.ok(r.local.sent.every((c) => /^data get entity (Cheater|Creative|Clean) /.test(c)), r.local.sent.join('|'));
+    // the later file scan merges into the same flag instead of making a second one
+    await r.ac.saveNow('s1'); r.ac.scanItems('s1');
+    assert.equal(r.flags('illegal-item').length, 1);
+    // the flag can be acted on right away
+    const res = await r.ac.act('s1', fl[0].id, 'remove-item'); assert.ok(res.ok);
+    assert.equal(r.world.get('Cheater').items.has('Inventory[{Slot:7b}]'), false);
+    // the next check finds nothing new
+    r.tick(11000); const n = r.flags().length; await r.ac._itemPoll('s1'); assert.equal(r.flags().length, n);
+  } finally { r.done(); }
+});
+
+test('items live: runs from the tick on its own interval, can be switched off, the interval is clamped', async () => {
+  const r = rig();
+  try {
+    r.add('Cheater', { items: new Map([['Inventory[{Slot:7b}]', { id: 'minecraft:spawner' }]]) }); r.online('Cheater');
+    r.ac.setConfig('s1', { checks: { itemsLive: false } });
+    r.tick(60000); await r.ac._tick(); await new Promise((res) => setTimeout(res, 50));
+    assert.equal(r.flags('illegal-item').length, 0); const itemQ = () => r.local.sent.filter((c) => / (Inventory|EnderItems|equipment)$/.test(c)).length;
+    assert.equal(itemQ(), 0, 'switched off: no item queries');
+    r.ac.setConfig('s1', { checks: { itemsLive: true } });
+    r.tick(60000); await r.ac._tick();
+    for (let i = 0; i < 40 && !r.flags('illegal-item').length; i++) await new Promise((res) => setTimeout(res, 25));
+    assert.equal(r.flags('illegal-item').length, 1, 'found by the tick itself');
+    const sent = itemQ(); r.tick(2000); await r.ac._tick(); await new Promise((res) => setTimeout(res, 50));
+    assert.equal(itemQ(), sent, 'not again before the interval is over');
+    assert.equal(normalizeConfig({ thresholds: { itemLiveSec: 1 } }).thresholds.itemLiveSec, 3);
+    assert.equal(normalizeConfig({ thresholds: { itemLiveSec: 99999 } }).thresholds.itemLiveSec, 300);
+    assert.equal(DEFAULTS.checks.itemsLive, true);
+  } finally { r.done(); }
+});
+
 test('end to end: poll through the real Local, answers hidden from the console, flags over HTTP, ack/clear/config/scan', async () => {
   const tmp = tmpdir(); const dataDir = path.join(tmp, 'data'); const serversDir = path.join(tmp, 'servers'); fs.mkdirSync(serversDir, { recursive: true });
   const bin = path.join(tmp, 'java');
