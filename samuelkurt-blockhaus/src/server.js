@@ -27,7 +27,7 @@ const { HostStats } = require('./lib/hoststats');
 const { Terminals } = require('./lib/terminal');
 const ws = require('./lib/websocket');
 
-const VERSION = '0.8.4';
+const VERSION = '0.8.5';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',

@@ -229,3 +229,10 @@ What it cannot do: it does not see packets, so no reach, killaura, autoclicker, 
 can it be read in online mode, so there is no client list. Texture packs a player installed themselves are invisible too; only the pack the server hands out is checked.
 Player commands are not written to the log by vanilla, so command spam is only seen on servers that log them (e.g. Paper; not verified here). A hover is only noticed
 if the client reports "not on ground" and there is at least one block of air below. A player who dies and respawns far away can show up as an "Großer Sprung" (info only).
+
+
+## Anticheat: Fehlalarme vermeiden (0.8.5)
+- **„moved too quickly“ / „moved wrongly“:** Stürze (die Zahlen der Meldung zeigen fast nur nach unten) zählen nicht. Ein Wurf nach oben (Enderdrache, Explosion; ≥ 8 Blöcke zwischen zwei Messungen), eine Portalreise (Dimensionswechsel oder Portalblock an der Position) und `/tp` entschuldigen die Meldungen davor und danach. Erst wenn danach noch genug unerklärte Meldungen übrig sind (mindestens 3 in 60 s, einstellbar), kommt die Meldung, einige Sekunden später als vorher (es wartet auf die nächste Positionsmessung).
+- **Fliegen:** Ein Anstieg zählt erst nach 4 Messungen ohne Bodenkontakt, jeder > 1 Block höher; ein einzelner Wurf gibt 12 s Ruhe. Wer weiter steigt, wird danach trotzdem gemeldet.
+- **Teleport-Meldung:** Wer stirbt und am eigenen Bett/Anker oder am Welt-Spawn wieder auftaucht, hat nicht „gesprungen“.
+- Geprüft auf einem echten 26.3-Server: Portalreise, Tod mit Wiederbelebung 2500 Blöcke entfernt, echte Meldungsreihe wird weiter gemeldet. Nicht nachgestellt: der Enderdrache selbst und ein echter Client (Wurf und Fall nur als Unit-Tests).

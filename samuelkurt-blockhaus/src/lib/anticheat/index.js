@@ -6,6 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const nbt = require('../nbt');
+const noend = require('../noend');
 const inventory = require('../inventory');
 const serverfiles = require('../serverfiles');
 const props = require('../props');
@@ -32,6 +33,10 @@ const ASK_TIMEOUT_MS = 2500;
 const ADMIN_ASK_MS = 8000;
 const EQUIP = { feet: 100, legs: 101, chest: 102, head: 103, offhand: -106 };
 const MAX_POLLED = 40;
+const LAUNCH_DY = 8;           // rising this much between two samples is a throw (dragon, explosion, wind charge), not walking
+const LAUNCH_QUIET_MS = 12000; // after a throw or a portal trip nothing about movement is judged for this long
+const DIM_QUIET_MS = 15000;
+const RISE_SAMPLES = 4;        // a flying hack keeps climbing; a throw peaks within a second or two
 const WET_QUIET_MS = 8000; // after water, a ladder or similar: no fly verdict for this long
 
 /** One query at a time: the console answers in order, and the answers carry no id. */
@@ -114,7 +119,7 @@ class Anticheat {
       s = {
         rates: new Rates(), asker: new Asker((cmd) => this.local.stdin(sid, cmd)), players: new Map(), ipNames: new Map(), lastPoll: 0, polling: false,
         lastFiles: 0, lastAllow: 0, wasOnline: false, seenDat: new Map(), seenStats: new Map(), tp: new Map(), leaveScanAt: 0,
-        lastRoundMs: 0, lastRoundPlayers: 0, pendingDue: new Map(), itemPolling: false, lastItemLive: 0, itemLiveMs: 0,
+        lastRoundMs: 0, lastRoundPlayers: 0, pendingDue: new Map(), warnDue: new Map(), itemPolling: false, lastItemLive: 0, itemLiveMs: 0,
       };
       this.state.set(sid, s);
     }
@@ -194,11 +199,16 @@ class Anticheat {
       }
       case 'moved-quickly': case 'moved-wrongly': {
         if (!cfg.checks.vanillaWarnings || this.exempt(sid, ev.name)) break;
-        const n = S.rates.hit(`${ev.type}:${lc(ev.name)}`, t, 60000);
-        if (n >= th.vanillaWarnCount) {
-          const what = ev.type === 'moved-quickly' ? '„moved too quickly“' : '„moved wrongly“';
-          this.flag(sid, 'vanilla-move', { player: ev.name, key: ev.type, message: `Der Server meldete für ${ev.name} ${n}× ${what} in 60 s`, evidence: { count: n, last: ev.detail || '' } });
-        }
+        // Falling is the most common innocent reason: a long drop (cliff, void, a chunk that is not loaded yet) is faster than the
+        // server's own limit allows for, and the numbers are the movement of that one packet (x, y, z). Not counted.
+        const d = ev.type === 'moved-quickly' && ev.detail ? ev.detail.split(',').map(Number) : null;
+        if (d && d.length === 3 && d.every(Number.isFinite) && d[1] < -0.5 && Math.hypot(d[0], d[2]) <= Math.abs(d[1])) break;
+        const k = lc(ev.name);
+        const ps = this._ps(S, k);
+        ps.warns = (ps.warns || []).filter((w) => t - w.t <= 60000);
+        ps.warns.push({ t, type: ev.type, detail: ev.detail || '' });
+        if (!(t - (ps.probeAt || 0) < 3000) && this.onlineNames(sid).some((n) => lc(n) === k)) { ps.probeAt = t; this._portalProbe(sid, S, ps, ev.name).catch(() => {}); }
+        if (ps.warns.filter((w) => w.type === ev.type).length >= th.vanillaWarnCount && !S.warnDue.has(k)) S.warnDue.set(k, { name: ev.name, at: t + (th.pollSec + 3) * 1000 });
         break;
       }
       case 'floating-kick':
@@ -206,6 +216,77 @@ class Anticheat {
         break;
       default:
     }
+  }
+
+  _ps(S, k) {
+    let ps = S.players.get(k);
+    if (!ps) { ps = { prev: null, strikes: 0, hist: [], flyCool: 0 }; S.players.set(k, ps); }
+    return ps;
+  }
+
+  /** Periods in which fast or odd movement has an innocent explanation (a throw, a portal trip, a /tp). Times in ms. */
+  _addExcuse(ps, from, to) {
+    (ps.ex || (ps.ex = [])).push([from, to]);
+    if (ps.ex.length > 40) ps.ex.shift();
+  }
+  _excusedAt(S, ps, k, t) {
+    const tp = S.tp.get(k);
+    if (tp && t >= tp - 3000 && t <= tp + 10000) return true;
+    return !!(ps && ps.ex && ps.ex.some(([a, b]) => t >= a && t <= b));
+  }
+
+  /** Dying and coming back is a "jump" too: true if the player now stands at their own respawn point (bed, anchor) or the world spawn. */
+  async _atRespawn(sid, name, cur) {
+    const near = (x, z) => Math.hypot(cur.x - x, cur.z - z) <= 12;
+    try {
+      const rec = this.rec(sid);
+      if (rec) {
+        const ws = noend.worldSpawn(path.join(this.local.dirOf(rec), this.worldOf(rec)));
+        if (ws && near(ws[0], ws[2])) return true;
+      }
+      const rp = await this.query(sid, name, 'respawn.pos');
+      let m = rp && rp.value ? /^\[I;\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\]$/.exec(rp.value.trim()) : null;
+      if (m) return near(Number(m[1]), Number(m[3]));
+      if (rp && rp.none) { // before 26.x the respawn point was SpawnX/SpawnZ
+        const sx = await this.query(sid, name, 'SpawnX'); const sz = await this.query(sid, name, 'SpawnZ');
+        const x = sx && sx.value ? parseInt(sx.value, 10) : NaN; const z = sz && sz.value ? parseInt(sz.value, 10) : NaN;
+        if (Number.isFinite(x) && Number.isFinite(z)) return near(x, z);
+      }
+    } catch { /* not answered: not excused */ }
+    return false;
+  }
+
+  /** Is the player standing in a portal right now? Then the movement the server just complained about was the trip. */
+  async _portalProbe(sid, S, ps, name) {
+    for (const [pos, blk] of [['~ ~ ~', 'minecraft:nether_portal'], ['~ ~1 ~', 'minecraft:nether_portal'], ['~ ~ ~', 'minecraft:end_portal'], ['~ ~ ~', 'minecraft:end_gateway']]) {
+      const ev = await S.asker.ask(`execute as ${name} at @s if block ${pos} ${blk}`, (e) => e.type === 'testPassed' || e.type === 'testFailed' || e.type === 'noEntity', 1200).catch(() => null);
+      if (!ev || ev.type === 'noEntity') return;
+      if (ev.type === 'testPassed') { const t = this.now(); this._addExcuse(ps, t - 10000, t + DIM_QUIET_MS); return; }
+    }
+  }
+
+  /**
+   * The server complained about a player's movement several times. It waits for the next position sample first (a throw or a
+   * portal trip only shows up in the samples), then counts only the complaints nothing explains.
+   */
+  async _judgeWarns(sid, S, store, name) {
+    const k = lc(name);
+    const ps = S.players.get(k);
+    if (!ps || !ps.warns) return;
+    const th = store.config.thresholds;
+    const now = this.now();
+    ps.warns = ps.warns.filter((w) => now - w.t <= 60000);
+    const real = ps.warns.filter((w) => !this._excusedAt(S, ps, k, w.t));
+    const by = {};
+    for (const w of real) by[w.type] = (by[w.type] || 0) + 1;
+    const [type, n] = Object.entries(by).sort((a, b) => b[1] - a[1])[0] || [null, 0];
+    if (!type || n < th.vanillaWarnCount) return;
+    const facts = await this._confirmFacts(sid, name).catch(() => null);
+    if (facts && motion.excuse(facts)) { ps.warns = []; return; }
+    const what = type === 'moved-quickly' ? '„moved too quickly“' : '„moved wrongly“';
+    const last = real.filter((w) => w.type === type).slice(-1)[0];
+    this.flag(sid, 'vanilla-move', { player: name, key: type, message: `Der Server meldete für ${name} ${n}× ${what} in 60 s`, evidence: { count: n, last: (last && last.detail) || '' } });
+    ps.warns = [];
   }
 
   /** Kicks the vanilla server itself did ("lost connection: Kicked for spamming" / "Flying is not enabled on this server"). */
@@ -275,6 +356,7 @@ class Anticheat {
   }
 
   async _sample(sid, name) {
+    const t0 = this.now();
     const pos = await this.query(sid, name, 'Pos');
     if (!pos || pos.offline || pos.none) return null;
     const og = await this.query(sid, name, 'OnGround');
@@ -284,7 +366,7 @@ class Anticheat {
     const p = motion.parsePos(pos.value);
     const ground = motion.parseBool(og.value);
     if (!p || ground === null) return null;
-    return { t: this.now(), x: p[0], y: p[1], z: p[2], dim: motion.parseStr(dim.value) || '?', ground };
+    return { t: this.now(), t0, x: p[0], y: p[1], z: p[2], dim: motion.parseStr(dim.value) || '?', ground };
   }
 
   async _poll(sid) {
@@ -340,19 +422,24 @@ class Anticheat {
     const cfg = store.config;
     const th = cfg.thresholds;
     const k = lc(name);
-    const ps = S.players.get(k) || { prev: null, strikes: 0, hist: [], flyCool: 0 };
-    S.players.set(k, ps);
+    const ps = this._ps(S, k);
     const prev = ps.prev;
     ps.prev = cur;
-    if (prev && prev.dim !== cur.dim) { ps.strikes = 0; ps.hist = []; }
+    const lastDy = ps.lastDy; ps.lastDy = prev ? cur.y - prev.y : 0;
+    if (prev && prev.dim !== cur.dim) { ps.strikes = 0; ps.hist = []; this._addExcuse(ps, prev.t0 || prev.t, cur.t + DIM_QUIET_MS); }
+    else if (prev && cur.y - prev.y >= LAUNCH_DY && !(lastDy > 1 && !prev.ground)) {
+      // thrown up (dragon, explosion, wind charge). Not when the player was already climbing without ground contact: a flying hack
+      // would otherwise get a fresh quiet period with every sample.
+      ps.strikes = 0; ps.hist = []; this._addExcuse(ps, prev.t0 || prev.t, cur.t + LAUNCH_QUIET_MS);
+    }
     else if (prev) {
       const st = motion.step(prev, cur);
       // a /tp (console or op) between the two samples explains any jump
-      const tped = (S.tp.get(k) || 0) >= prev.t - 500;
-      if (st.dt > 0 && st.dt <= 60 && !tped) {
+      const tped = (S.tp.get(k) || 0) >= (prev.t0 || prev.t) - 500; // from the START of the sample: it takes a second to ask
+      if (st.dt > 0 && st.dt <= 60 && !tped && !this._excusedAt(S, ps, k, cur.t)) {
         if (cfg.checks.speed && st.dist > th.teleportBlocks) {
           const facts = await this._confirmFacts(sid, name);
-          if (facts && !motion.excuse(facts)) {
+          if (facts && !motion.excuse(facts) && !(await this._atRespawn(sid, name, cur))) {
             this.flag(sid, 'teleport', { player: name, key: 'tp', message: `${name} sprang ${Math.round(st.dist)} Blöcke in ${st.dt.toFixed(1)} s`, evidence: { dim: prev.dim || cur.dim, blocks: Math.round(st.dist), seconds: Math.round(st.dt * 10) / 10, from: [prev.x, prev.y, prev.z].map(Math.round), to: [cur.x, cur.y, cur.z].map(Math.round) } });
           }
           ps.strikes = 0;
@@ -391,16 +478,17 @@ class Anticheat {
         const openAll = win.filter((x) => !x.ground).every((x) => x.air === true);
         if (Math.max(...ys) - Math.min(...ys) < 0.15 && off >= Math.ceil(n * 0.6) && openAll) kind = 'hover';
       }
-      const tail = ps.hist.slice(-3);
-      if (!kind && tail.length === 3 && tail.every((x) => !x.ground && x.air === true) && tail[1].y - tail[0].y > 1 && tail[2].y - tail[1].y > 1) kind = 'rise';
+      const tail = ps.hist.slice(-RISE_SAMPLES);
+      if (!kind && tail.length === RISE_SAMPLES && tail.every((x, i) => !x.ground && x.air === true && (i === 0 || x.y - tail[i - 1].y > 1))) kind = 'rise';
       if (kind && ps.wetAt && cur.t - ps.wetAt < WET_QUIET_MS) kind = null;
+      if (kind && this._excusedAt(S, ps, k, cur.t)) kind = null;
       if (kind) {
         ps.flyCool = cur.t + 30000;
         const facts = await this._confirmFacts(sid, name);
         if (facts && !motion.excuse(facts, { forFly: true }) && await this._openAir(sid, name, kind === 'hover')) {
           const first = (kind === 'hover' ? ps.hist.slice(-n) : tail)[0];
           const secs = Math.round((cur.t - first.t) / 1000);
-          this.flag(sid, 'fly', { player: name, key: kind, message: kind === 'hover' ? `${name} schwebte ${secs} s lang in der Luft (Höhe ${Math.round(cur.y)})` : `${name} stieg ohne Bodenkontakt ${Math.round(tail[2].y - tail[0].y)} Blöcke in ${secs} s nach oben`, evidence: { seconds: secs, y: Math.round(cur.y * 10) / 10, mode: kind, pos: [cur.x, cur.y, cur.z].map(Math.round) } });
+          this.flag(sid, 'fly', { player: name, key: kind, message: kind === 'hover' ? `${name} schwebte ${secs} s lang in der Luft (Höhe ${Math.round(cur.y)})` : `${name} stieg ohne Bodenkontakt ${Math.round(tail[tail.length - 1].y - tail[0].y)} Blöcke in ${secs} s nach oben`, evidence: { seconds: secs, y: Math.round(cur.y * 10) / 10, mode: kind, pos: [cur.x, cur.y, cur.z].map(Math.round) } });
           ps.hist = [];
         }
       }
@@ -562,6 +650,7 @@ class Anticheat {
         S.wasOnline = true; S.lastAllow = 0;
       }
       if (S.leaveScanAt && t >= S.leaveScanAt) { S.leaveScanAt = 0; try { this.scanItems(sid); this.scanXray(sid); } catch { /* ignore */ } }
+      for (const [k, w] of S.warnDue) if (t >= w.at) { S.warnDue.delete(k); this._judgeWarns(sid, S, store, w.name).catch(() => {}); }
       for (const [n, due] of S.pendingDue) if (t >= due) { S.pendingDue.delete(n); this._runPending(sid, n).catch(() => {}); }
       if (t - S.lastFiles >= FILES_EVERY_MS) {
         S.lastFiles = t;

@@ -26,7 +26,7 @@ const DEFAULTS = {
 
 const RANGE = {
   pollSec: [2, 60], itemLiveSec: [3, 300], speedBps: [6, 100], speedStrikes: [1, 10], teleportBlocks: [20, 5000], flyOffGroundSamples: [2, 30],
-  vanillaWarnCount: [1, 100], floodJoins: [2, 200], floodWindowS: [5, 600], namesPerIp: [2, 50],
+  vanillaWarnCount: [3, 100], floodJoins: [2, 200], floodWindowS: [5, 600], namesPerIp: [2, 50],
   chatPer10s: [2, 100], cmdPer10s: [2, 100], repeatMsgs: [2, 50], xrayMinOre: [1, 500], xrayRatio: [0.005, 0.5],
   warnPoints: [1, 1000], highPoints: [2, 5000], halfLifeMin: [1, 10080],
 };

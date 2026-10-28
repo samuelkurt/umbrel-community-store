@@ -243,11 +243,13 @@ function rig({ now = 1e9 } = {}) {
           const v = { Pos: `[${p.pos[0]}d, ${p.pos[1]}d, ${p.pos[2]}d]`, OnGround: p.ground ? '1b' : '0b', Dimension: `"${p.dim || 'minecraft:overworld'}"`, FallFlying: p.fall ? '1b' : '0b', playerGameType: String(p.mode || 0),
             Health: `${p.hp === undefined ? 20 : p.hp}.0f`, abilities: `{invulnerable: 0b, mayfly: ${p.mayfly ? 1 : 0}b, instabuild: 0b, flying: 0b}` }[m[2]];
           if (m[2] === 'RootVehicle') return p.vehicle ? this.line(`System chat: ${m[1]} has the following entity data: {Entity: {id: "minecraft:boat"}}`) : this.line('System chat: Found no elements matching RootVehicle');
+          if (m[2] === 'respawn.pos') return p.respawn ? this.line(`System chat: ${m[1]} has the following entity data: [I; ${p.respawn.join(', ')}]`) : this.line('System chat: Found no elements matching respawn.pos');
           if (m[2] === 'active_effects') return p.effects ? this.line(`System chat: ${m[1]} has the following entity data: [${p.effects.map((e) => `{id: "minecraft:${e[0]}", amplifier: ${e[1]}b, duration: 99}`).join(', ')}]`) : this.line('System chat: Found no elements matching active_effects');
           return this.line(`System chat: ${m[1]} has the following entity data: ${v}`);
         }
         m = /^execute as (\S+) at @s if block/.exec(cmd);
-        if (m) { const p = world.get(m[1]); if (!p) return this.line('System chat: No entity was found'); this.line(p.air !== false ? 'System chat: Test passed' : 'System chat: Test failed'); }
+        if (m) { const p = world.get(m[1]); if (!p) return this.line('System chat: No entity was found'); const inPortal = /(?:nether_portal|end_portal|end_gateway)$/.test(cmd); // a portal is only there when the test says so
+          this.line((inPortal ? p.portal === true : p.air !== false) ? 'System chat: Test passed' : 'System chat: Test failed'); }
       });
     },
   };
@@ -257,10 +259,15 @@ function rig({ now = 1e9 } = {}) {
   const add = (name, o = {}) => world.set(name, { pos: [0, 64, 0], ground: true, ...o });
   const flags = (type) => ac.store('s1').flags.filter((f) => !type || f.type === type);
   const poll = async (dt = 4000) => { T += dt; await ac._poll('s1'); };
-  return { root, dir, ac, local, world, add, online, flags, poll, tick: (ms) => { T += ms; }, get now() { return T; }, done: () => ac.stop() };
+  const settle = async (ms) => { // time passes, the timer runs, and the questions it asks get answered
+    T += ms; await ac._tick();
+    const S = ac.S('s1');
+    for (let i = 0; i < 400; i++) { await new Promise((res) => setTimeout(res, 2)); if (!S.asker.cur && !S.asker.q.length && !S.warnDue.size && i > 5) break; }
+  };
+  return { root, dir, ac, local, world, add, online, flags, poll, settle, tick: (ms) => { T += ms; }, get now() { return T; }, done: () => ac.stop() };
 }
 
-test('console checks: chat spam, repeats, vanilla warnings, kicks, flood, many names, exemptions', () => {
+test('console checks: chat spam, repeats, vanilla warnings, kicks, flood, many names, exemptions', async () => {
   const r = rig();
   try {
     for (let i = 0; i < 7; i++) r.local.line(`[Not Secure] <Anna> nachricht ${i}`);
@@ -273,6 +280,8 @@ test('console checks: chat spam, repeats, vanilla warnings, kicks, flood, many n
     for (let i = 0; i < 4; i++) r.local.line('Cara moved too quickly! 1.0,0.0,0.0', 'WARN');
     assert.equal(r.flags('vanilla-move').length, 0);
     r.local.line('Cara moved too quickly! 1.0,0.0,0.0', 'WARN');
+    assert.equal(r.flags('vanilla-move').length, 0); // it waits for the next position sample first
+    await r.settle(15000);
     assert.equal(r.flags('vanilla-move').length, 1);
     r.local.line('Cara was kicked for floating too long!', 'WARN');
     r.local.line('Dan lost connection: Flying is not enabled on this server');
@@ -292,7 +301,7 @@ test('console checks: chat spam, repeats, vanilla warnings, kicks, flood, many n
     for (let i = 0; i < 6; i++) r.local.line(`L${i}[/192.168.1.7:${7000 + i}] logged in with entity id ${i} at (0.0, 64.0, 0.0)`);
     assert.equal(r.flags('many-names').length, 1);
     // nothing of this is ever sent to the server or the players
-    assert.deepEqual(r.local.sent, []);
+    assert.deepEqual(r.local.sent.filter((c) => !/^data get entity \S+ \S+$/.test(c)), []); // reading questions are all it asks
   } finally { r.done(); }
 });
 
@@ -368,6 +377,7 @@ test('speed: vehicle, elytra, creative, Speed potion and dimension changes are e
     r.world.get('Bob').pos = [1500, 64, 0]; r.world.get('Bob').dim = 'minecraft:overworld'; await r.poll();
     assert.equal(r.flags().length, 0, 'portal');
     // a plain jump of 800 blocks is reported as a teleport (information only) ...
+    r.tick(20000); // the portal trip is over
     r.world.get('Bob').pos = [3000, 64, 0]; await r.poll();
     assert.equal(r.flags('teleport').length, 1); assert.equal(r.flags('teleport')[0].severity, 'info');
     // ... but not when the console says someone teleported the player
@@ -389,14 +399,14 @@ test('flying: hovering and climbing are flagged, jumping, water, vehicles and cr
   };
   const hover = await run({}, [100, 100, 100, 100, 100]);
   assert.equal(hover.length, 1); assert.equal(hover[0].key, 'hover'); assert.equal(hover[0].severity, 'high');
-  const rise = await run({}, [100, 108, 116]);
+  const rise = await run({}, [100, 108, 116, 124, 132, 140, 148, 156]); // a climb that does not stop (the first jump up gets a short quiet period)
   assert.equal(rise.length, 1); assert.equal(rise[0].key, 'rise');
   assert.equal((await run({ air: false }, [100, 100, 100, 100, 100])).length, 0, 'water / ladder / floor below');
   assert.equal((await run({ vehicle: true }, [100, 100, 100, 100, 100])).length, 0);
   assert.equal((await run({ mode: 1 }, [100, 100, 100, 100, 100])).length, 0);
   assert.equal((await run({ mayfly: true }, [100, 100, 100, 100, 100])).length, 0);
-  assert.equal((await run({ fall: true }, [100, 108, 116])).length, 0);
-  assert.equal((await run({ effects: [['levitation', 0]] }, [100, 108, 116])).length, 0);
+  assert.equal((await run({ fall: true }, [100, 108, 116, 124, 132, 140, 148, 156])).length, 0);
+  assert.equal((await run({ effects: [['levitation', 0]] }, [100, 108, 116, 124, 132, 140, 148, 156])).length, 0);
   assert.equal((await run({ hp: 0 }, [100, 100, 100, 100, 100])).length, 0, 'dead');
   assert.equal((await run({}, [64, 65.2, 64.3, 64.9, 65.1, 64.2])).length, 0, 'bunny hop: off the ground but the height changes');
   assert.equal((await run({}, [64, 64, 64, 64, 64], true)).length, 0, 'standing on the ground');
@@ -796,4 +806,82 @@ test('end to end: poll through the real Local, answers hidden from the console, 
     // survives a restart of the panel's memory: flags and config are files
     assert.ok(fs.existsSync(path.join(dataDir, 'anticheat', id, 'config.json')));
   } finally { await app.local.shutdown(2000).catch(() => {}); app.close(); app.closeAllConnections?.(); }
+});
+
+test('vanilla warnings: a fall, a throw (dragon, explosion) and a portal trip are not a series; a real series still is', async () => {
+  const warn = (r, n, detail) => { for (let i = 0; i < n; i++) r.local.line(`Bob moved too quickly! ${detail}`, 'WARN'); };
+  // jumping off a cliff: the server's numbers are the movement of one packet, straight down
+  let r = rig();
+  try {
+    r.add('Bob'); r.online('Bob'); await r.poll();
+    warn(r, 8, '0.0014939624426233422,-10.854658122346834,-0.18972649078875747');
+    await r.settle(15000);
+    assert.equal(r.flags('vanilla-move').length, 0, 'fall');
+  } finally { r.done(); }
+  // thrown up by the Ender Dragon: the warnings come first, the position samples show the throw a few seconds later
+  r = rig();
+  try {
+    r.add('Bob'); r.online('Bob'); await r.poll();
+    warn(r, 6, '4.2,3.9,-2.5');
+    r.world.get('Bob').pos = [20, 95, -10]; r.world.get('Bob').ground = false; await r.poll();
+    r.world.get('Bob').pos = [30, 100, -14]; await r.poll();
+    r.world.get('Bob').pos = [32, 64, -14]; r.world.get('Bob').ground = true; await r.poll();
+    await r.settle(15000);
+    assert.equal(r.flags().length, 0, JSON.stringify(r.flags().map((f) => f.message)));
+  } finally { r.done(); }
+  // through a nether portal (the dimension changes between two samples), even in a strange way
+  r = rig();
+  try {
+    r.add('Bob'); r.online('Bob'); await r.poll();
+    warn(r, 6, '9.0,0.0,9.0');
+    r.world.get('Bob').dim = 'minecraft:the_nether'; r.world.get('Bob').pos = [10, 64, 10]; await r.poll();
+    await r.settle(15000);
+    assert.equal(r.flags().length, 0, JSON.stringify(r.flags().map((f) => f.message)));
+  } finally { r.done(); }
+  // in and straight back out of a portal between two samples (the dimension is the same in both): the server says it is in a portal
+  r = rig();
+  try {
+    r.add('Bob', { portal: true }); r.online('Bob'); await r.poll();
+    warn(r, 6, '9.0,0.0,9.0');
+    await r.settle(500);
+    r.world.get('Bob').pos = [3, 64, 3]; await r.poll();
+    await r.settle(15000);
+    assert.equal(r.flags().length, 0, JSON.stringify(r.flags().map((f) => f.message)));
+  } finally { r.done(); }
+  // the same warnings with nothing that explains them: flagged
+  r = rig();
+  try {
+    r.add('Bob'); r.online('Bob'); await r.poll();
+    warn(r, 6, '9.0,0.0,9.0');
+    r.world.get('Bob').pos = [3, 64, 3]; await r.poll();
+    await r.settle(15000);
+    assert.equal(r.flags('vanilla-move').length, 1);
+  } finally { r.done(); }
+  // a climb that goes on for many samples is still flying, a single throw is not
+  r = rig();
+  try {
+    r.add('Bob', { ground: false }); r.online('Bob');
+    for (const y of [64, 90, 104, 90, 64]) { r.world.get('Bob').pos = [0, y, 0]; await r.poll(); }
+    assert.equal(r.flags('fly').length, 0);
+  } finally { r.done(); }
+});
+
+test('vanilla warnings: the lowest series length is 3 (a stored 1 is raised)', () => {
+  const { normalizeConfig } = require('../lib/anticheat/store');
+  assert.equal(normalizeConfig({ thresholds: { vanillaWarnCount: 1 } }).thresholds.vanillaWarnCount, 3);
+});
+
+test('teleport: coming back after dying at the own bed is not a jump; the same jump anywhere else still is', async () => {
+  let r = rig();
+  try {
+    r.add('Bob', { respawn: [3000, 64, 3000] }); r.online('Bob'); await r.poll();
+    r.world.get('Bob').pos = [3002.5, 64, 2999.5]; await r.poll();
+    assert.equal(r.flags('teleport').length, 0);
+  } finally { r.done(); }
+  r = rig();
+  try {
+    r.add('Bob', { respawn: [3000, 64, 3000] }); r.online('Bob'); await r.poll();
+    r.world.get('Bob').pos = [-3000, 64, 3000]; await r.poll();
+    assert.equal(r.flags('teleport').length, 1);
+  } finally { r.done(); }
 });

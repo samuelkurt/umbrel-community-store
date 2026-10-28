@@ -31,7 +31,7 @@ const SEV = { info: 'Info', warn: 'Warnung', high: 'Schwer' };
 const CHECKS = [
   ['items', 'Items prüfen', 'Unmögliche Items (Bedrock, Befehlsblöcke, Spawner, Spawn-Eier …), zu hohe Verzauberungen, zu große Stapel, unzerbrechliche Gegenstände. Liest die gespeicherten Spielerdaten (neue Daten gibt es beim Speichern, alle paar Minuten, und beim Verlassen).'],
   ['itemsLive', 'Items live prüfen (schnell)', 'Fragt das Inventar, die Endertruhe und die Ausrüstung jedes Online-Spielers alle paar Sekunden beim Server ab, damit ein unmögliches Item sofort auffällt statt erst beim Speichern. Schreibt pro Spieler und Runde drei Zeilen ins Server-Log (latest.log); in der Konsolen-Ansicht von Blockhaus fehlen sie. Ohne diese Option bleibt nur die Dateiprüfung.'],
-  ['vanillaWarnings', 'Warnungen des Servers zählen', '„moved too quickly“ und „moved wrongly“ aus dem Server-Log, wenn sie sich häufen, dazu Kicks wegen Schwebens. Ohne Abfragen.'],
+  ['vanillaWarnings', 'Warnungen des Servers zählen', '„moved too quickly“ und „moved wrongly“ aus dem Server-Log, wenn sie sich häufen, dazu Kicks wegen Schwebens. Nicht gezählt: Stürze, Würfe nach oben (Enderdrache, Explosion), Portalreisen, /tp, Elytra, Fahrzeuge, Kreativ.'],
   ['flood', 'Verbindungsflut und Namen pro Adresse', 'Viele Verbindungsversuche von einer Adresse in kurzer Zeit, viele verschiedene Namen von einer öffentlichen Adresse. Es wird nur gemeldet, nichts gesperrt.'],
   ['spam', 'Chat- und Befehls-Spam', 'Zu viele oder immer gleiche Nachrichten. Befehle sieht nur ein Server, der sie loggt (Vanilla tut das nicht).'],
   ['xray', 'X-Ray-Statistik', 'Vergleicht abgebaute seltene Erze mit allem Abgebauten aus den Statistik-Dateien. Nur ein Hinweis.'],
@@ -47,7 +47,7 @@ const NUMS = [
   ['speedStrikes', 'Wie oft hintereinander zu schnell', 'So viele Abfragen in Folge müssen über der Grenze liegen.'],
   ['teleportBlocks', 'Sprung ab (Blöcke)', 'Distanz zwischen zwei Abfragen, ab der ein „Sprung“ gemeldet wird. Ein Tod mit Respawn kann so aussehen.'],
   ['flyOffGroundSamples', 'Schweben nach (Abfragen)', 'So viele Abfragen in Folge in gleicher Höhe.'],
-  ['vanillaWarnCount', 'Server-Warnungen pro Minute', 'Ab so vielen „moved too quickly“ in 60 s.'],
+  ['vanillaWarnCount', 'Server-Warnungen pro Minute', 'Ab so vielen unerklärten „moved too quickly“ in 60 s (mindestens 3). Die Prüfung wartet auf die nächste Positionsmessung, deshalb kommt die Meldung einige Sekunden später.'],
   ['floodJoins', 'Verbindungen für „Flut“', 'Versuche von einer Adresse innerhalb des Zeitfensters.'],
   ['floodWindowS', 'Zeitfenster Flut (s)', ''],
   ['namesPerIp', 'Namen pro Adresse', 'Verschiedene Spielernamen von einer öffentlichen Adresse in 24 Stunden.'],
