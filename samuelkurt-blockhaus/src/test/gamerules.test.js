@@ -195,3 +195,33 @@ test('End lock when the jar cannot be read (Forge, NeoForge, launchers): a pack 
   }
   assert.equal(noend.canLock(null), true); assert.equal(noend.canLock('1.21'), true); assert.equal(noend.canLock('1.9'), false);
 });
+
+test('Paper 26.x: the rules live with the overworld (dimensions/minecraft/overworld), the seed too; vanilla stays first', () => {
+  const w = tmpdir();
+  const paperFile = path.join(w, gr.PAPER_FILE);
+  const put = (file, rules) => {
+    const data = {}; for (const [k, v] of Object.entries(rules)) data['minecraft:' + k] = typeof v === 'boolean' ? { t: 'byte', v: v ? 1 : 0 } : { t: 'int', v };
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, nbt.encode('', { data: { t: 'compound', v: data }, DataVersion: { t: 'int', v: 5023 } }, { gzip: true }));
+  };
+  put(paperFile, { keep_inventory: false, random_tick_speed: 3 });
+  put(path.join(w, 'dimensions', 'minecraft', 'the_nether', 'data', 'minecraft', 'game_rules.dat'), { keep_inventory: true }); // the other dimensions are left alone
+  const r = gr.read(w);
+  assert.equal(r.exists, true);
+  assert.equal(r.rules.find((x) => x.name === 'keep_inventory').value, false);
+  gr.writeRule(w, 'keep_inventory', true); gr.writeRule(w, 'random_tick_speed', 9);
+  const again = gr.read(w).rules;
+  assert.equal(again.find((x) => x.name === 'keep_inventory').value, true); assert.equal(again.find((x) => x.name === 'random_tick_speed').value, 9);
+  assert.equal(gr.read(path.join(w, 'dimensions', 'minecraft', 'the_nether')).rules.find((x) => x.name === 'keep_inventory').value, true, 'the Nether file is untouched');
+  assert.ok(fs.existsSync(paperFile + '.blockhaus.bak'));
+  // a world that has the vanilla file uses it, whatever else is there
+  put(path.join(w, gr.FILE), { keep_inventory: false });
+  assert.equal(gr.read(w).rules.find((x) => x.name === 'keep_inventory').value, false);
+  // seed: also from the Paper place
+  const { readLevel } = require('../lib/worlds');
+  const s = tmpdir(); levelDat(s, [0, 64, 0]);
+  const wgs = path.join(s, 'dimensions', 'minecraft', 'overworld', 'data', 'minecraft', 'world_gen_settings.dat');
+  fs.mkdirSync(path.dirname(wgs), { recursive: true });
+  fs.writeFileSync(wgs, nbt.encode('', { data: { t: 'compound', v: { seed: { t: 'long', v: -8780582928748362200n } } } }, { gzip: true }));
+  assert.equal(readLevel(s).seed, '-8780582928748362200');
+});

@@ -37,11 +37,14 @@ function readLevel(worldDir) {
   else if (data.RandomSeed !== undefined) out.seed = String(data.RandomSeed);
   if (out.seed === null) {
     // newer versions may keep the seed in a separate data file (shape not verified for those versions)
-    try {
-      const w = nbt.parse(fs.readFileSync(path.join(worldDir, 'data', 'minecraft', 'world_gen_settings.dat'))).value;
-      const d = w.data || w;
-      if (d.seed !== undefined) out.seed = String(d.seed);
-    } catch { /* not there */ }
+    // Vanilla: <world>/data/minecraft/…; Paper 26.x keeps it with the overworld: <world>/dimensions/minecraft/overworld/data/minecraft/… (checked on Paper 26.3)
+    for (const base of [worldDir, path.join(worldDir, 'dimensions', 'minecraft', 'overworld')]) {
+      try {
+        const w = nbt.parse(fs.readFileSync(path.join(base, 'data', 'minecraft', 'world_gen_settings.dat'))).value;
+        const d = w.data || w;
+        if (d.seed !== undefined) { out.seed = String(d.seed); break; }
+      } catch { /* not there */ }
+    }
   }
   out.version = data.Version && data.Version.Name ? data.Version.Name : null;
   out.gameType = data.GameType !== undefined ? GAME_TYPES[data.GameType] || String(data.GameType) : null;

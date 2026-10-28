@@ -74,7 +74,16 @@ const KNOWN = {
 };
 const CATEGORIES = ['Spieler', 'Kampf & Schaden', 'Mobs', 'Welt', 'Portale', 'Befehle & Technik', 'Weitere'];
 
-const fileOf = (worldDir) => path.join(worldDir, FILE);
+// Vanilla (and Forge, NeoForge, Fabric): <world>/data/minecraft/game_rules.dat. Paper 26.x keeps one per dimension, each dimension being
+// a world of its own: <world>/dimensions/minecraft/<dimension>/data/minecraft/game_rules.dat. The console's /gamerule changes the
+// overworld's file there (checked on Paper 26.3), so that one is used.
+const PAPER_FILE = path.join('dimensions', 'minecraft', 'overworld', 'data', 'minecraft', 'game_rules.dat');
+function fileOf(worldDir) {
+  const vanilla = path.join(worldDir, FILE);
+  if (fs.existsSync(vanilla)) return vanilla;
+  const paper = path.join(worldDir, PAPER_FILE);
+  return fs.existsSync(paper) ? paper : vanilla;
+}
 
 /** Major version from "26.3", "1.21.4" (-> 1), "26w10a" (-> 26). Games from 26 on use <world>/data/minecraft/game_rules.dat. */
 function eraOf(version) {
@@ -133,4 +142,4 @@ function writeRule(worldDir, name, value) {
   writeFileKeepOwner(file, out);
 }
 
-module.exports = { read, writeRule, normalize, eraOf, KNOWN, CATEGORIES, NETHER, NAME_RE, FILE };
+module.exports = { read, writeRule, normalize, eraOf, fileOf, KNOWN, CATEGORIES, NETHER, NAME_RE, FILE, PAPER_FILE };

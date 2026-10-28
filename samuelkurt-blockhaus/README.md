@@ -236,3 +236,8 @@ if the client reports "not on ground" and there is at least one block of air bel
 - **Fliegen:** Ein Anstieg zählt erst nach 4 Messungen ohne Bodenkontakt, jeder > 1 Block höher; ein einzelner Wurf gibt 12 s Ruhe. Wer weiter steigt, wird danach trotzdem gemeldet.
 - **Teleport-Meldung:** Wer stirbt und am eigenen Bett/Anker oder am Welt-Spawn wieder auftaucht, hat nicht „gesprungen“.
 - Geprüft auf einem echten 26.3-Server: Portalreise, Tod mit Wiederbelebung 2500 Blöcke entfernt, echte Meldungsreihe wird weiter gemeldet. Nicht nachgestellt: der Enderdrache selbst und ein echter Client (Wurf und Fall nur als Unit-Tests).
+
+
+## Paper (0.8.6)
+Paper 26 legt die Spielregeln (`game_rules.dat`) und den Seed (`world_gen_settings.dat`) bei der Oberwelt ab: `<Welt>/dimensions/minecraft/overworld/data/minecraft/…`, nicht in `<Welt>/data/minecraft/` wie Vanilla, Forge und NeoForge. Blockhaus nimmt die Vanilla-Datei, wenn es sie gibt, sonst die von Paper. Jede Dimension hat bei Paper eigene Regeln; die Seite zeigt und ändert die der Oberwelt (so wie der Konsolenbefehl `/gamerule`). Der Nether-Schalter sperrt damit den Weg *in* den Nether von der Oberwelt aus.
+Auf einem echten Paper 26.3 geprüft: Regeln lesen und ändern (laufend und gestoppt), Nether-Schalter (Portal gesperrt/erlaubt), End-Sperre mit Rückkehr, Item-Prüfung live, Seed. Nicht geprüft: Purpur, Fabric, Folia.
